@@ -41,6 +41,15 @@
       (doseq [{:keys [tool why]} missing]
         (println (format "  %-12s %s" tool why))))
     (if (empty? blocking)
-      (do (println "\n✓ toolchain ok for the current stage") (System/exit 0))
+      (do (if (seq missing)
+            ;; Distinguish "the gate will pass" from "this repo's work can be
+            ;; done here". `bb check` does not run benchmarks, so it goes green
+            ;; on a machine that cannot reproduce a single number in
+            ;; doc/design/0002 — which read as everything being fine.
+            (do (println "\n✓ gate tools ok — `bb check` will pass")
+                (println "! but the tools above are missing, so `bb bench-s0` will refuse to run")
+                (println "  and nothing in doc/design/0002-measure-first.md can be reproduced here."))
+            (println "\n✓ toolchain ok"))
+          (System/exit 0))
       (do (println "\n✗ missing required tools. `nix develop`, or install them.")
           (System/exit 1)))))

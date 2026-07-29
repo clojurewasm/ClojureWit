@@ -7,7 +7,7 @@ compiler between the design and the number would only add doubt.
 Predictions were recorded in `doc/design/0002-measure-first.md` **before** the
 first run. Do not read them until you have your own expectation.
 
-## The four
+## The benchmarks
 
 | | Module | Measures | Decides |
 |---|---|---|---|
@@ -15,7 +15,8 @@ first run. Do not read them until you have your own expectation.
 | **B1L/B1i/B1c** | (same module) | controls: the same walk at 1 load, 0 loads, and no dispatch | Where in B1 the cost actually is |
 | **B2** | `b2_megamorphic.wat` | the same site with 10 receiver types, plus a depth-matched one-type control | Whether we beat the JVM where its per-call-site cache thrashes |
 | **B3** | `b3_arith.wat` | `i31` fast-path add vs a boxed slow path | Whether boxed arithmetic can be cheap |
-| **B4** | `b4_cast_depth.wat` | `ref.cast` at hierarchy depth 2 vs 6 | How flat the type graph has to be |
+| **B4** | `b4_cast.wat` | `ref.cast` by target depth *and* by input variety, against a no-cast floor | How to shape the type graph |
+| **B5/B5x/B7** | (in `b2_megamorphic.wat`) | guarded call-site specialisation, and the hit rate at which it starts paying | Whether the server lane is reachable at all |
 
 Each runs on **both** `node` (V8: speculative inlining) and `wasmtime`
 (no adaptive tier). Both numbers are reported; neither is "the" answer.
@@ -70,8 +71,15 @@ errors.
 
 ## Status
 
-**B1 and B2 done** — numbers and what they mean are in
-`doc/design/0002-measure-first.md`. B3 and B4 are not written, and B5
-(call-site specialisation) and B6 (the component boundary crossing) were added
-to the plan after B1 and `doc/design/0007-*`; see `doc/status.md`. This README
-is the contract they have to satisfy.
+**All six measured** — B1–B4 as contracted, plus B5 and B7, which B1's and B2's
+findings forced. Numbers, controls and what each means are in
+`doc/design/0002-measure-first.md`; the verdict is `doc/design/0010-*`.
+
+B5 and B7 live inside `b2_megamorphic.wat` rather than their own files so that
+their type graph and rings are provably identical to the baselines they are
+compared against. That is deliberate: comparing across files is how three of
+this project's controls went wrong.
+
+**B6 — the component boundary crossing — is not written**, and is the one
+thing the project's own pitch rests on that nothing here measures. See
+`doc/status.md`.
