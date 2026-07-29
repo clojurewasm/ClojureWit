@@ -41,6 +41,7 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B4b | the axis B2 questioned: `ref.cast` cost vs *variety of input types*, depth held fixed | **recorded 2026-07-29, before the run, and it contradicts B4's own prediction above.** Both engines implement a cast as a constant-time supertype-array probe, so **neither depth nor variety should matter measurably**, and B4's original prediction is wrong. The 6.81-vs-2.33 gap in B2 that raised the question was confounded — it varied the ring *and* the callee — and I expect it to be the mixed ring's dispatch, not the cast. Falsified if either axis moves the number more than the run-to-run spread. | **half right.** Depth: flat, as predicted. Variety: **+2.14 ns on wasmtime** (3.718 → 5.860), so B2's lead was real and this prediction is falsified on that axis. On V8 neither moves anything (0.843 → 0.844). |
 | B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor. That difference — 0.06 ns — is *below this benchmark's own resolution* (a re-run gives 0.15), so the honest statement is **indistinguishable from the direct-call floor**, which is what the 1 ns budget needs. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
 | B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover roughly **25% on wasmtime, 80% on V8**, ±5 points — the **3× ratio between lanes is the robust part** (a re-run reproduces 3.06× against 3.04×); the individual figures are not, for three reasons recorded below. |
+| B7b | is B7's generic-control hump signal or noise? k = 1, 2, 4, 5 | **recorded 2026-07-29, before the run.** The hump is **real, and it is indirect-branch prediction on the generic path**: at k=0 and k=11 the ring holds one type so `call_ref` always goes to the same target and is predicted; in between it alternates between two, and mispredicts. That predicts the new points **trace a smooth hump rather than a flat 8.5**, and the wasmtime crossover stays near 25% rather than moving to 41%. Falsified if k=1 and k=2 come in flat at the endpoint value. It does not explain why B2's *ten*-type ring (9.22) is cheaper than this two-type one (10.12), and that stays open. | **confirmed, and the lane asymmetry confirms the mechanism.** The generic control traces a smooth hump — 8.51, 9.09, 9.31, 10.12, 10.12, 10.55, 10.31, 9.24, 8.50 — rising from both single-type endpoints toward the middle. **On V8 there is no hump at all** (0.856–0.936 across every ring), which is what "the engine speculates, so indirect-branch predictability does not dominate" predicts. The wasmtime crossover lands at **26.6%**, so ~25% stands and 41% is ruled out. The ten-vs-two-type anomaly is untouched and stays open. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -250,13 +251,25 @@ under 3-in-11 and V8 not until nearly 9-in-11; a re-run at n=4M gave 24.8% and
   bounds V8's crossover only to somewhere around 70–90%.
 - **The interpolation spans 27 percentage points with no intermediate point**,
   over a guarded curve whose per-node slope varies by 60%.
-- **The generic control is not flat.** It humps ~20% in the middle
-  (8.51 → 10.12 → 10.31 → 9.24 → 8.50) for reasons nobody has explained, and
-  the wasmtime crossover sits inside the steepest part of it. **If that hump is
-  measurement rather than signal, the wasmtime crossover moves to ~41%** — a
-  1.6× swing on the central number.
+- **The generic control is not flat** — it humps ~20% in the middle, and the
+  wasmtime crossover sits inside the steepest part of it. **Settled by
+  measuring k = 1, 2, 4, 5** (B7b): the hump is real and smooth, so the
+  crossover is **26.6%** rather than the ~41% a flat control would have given.
 
-Measuring k = 1, 2, 4, 5 would settle all three and costs ten lines per point.
+With those points the wasmtime curve is:
+
+| k/11 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 9 | 11 |
+|---|---|---|---|---|---|---|---|---|---|
+| guarded | 12.05 | 11.46 | 10.76 | 10.01 | 9.04 | 8.21 | 7.26 | 4.08 | 2.45 |
+| generic | 8.51 | 9.09 | 9.31 | 10.12 | 10.12 | 10.55 | 10.31 | 9.24 | 8.50 |
+
+**The hump is indirect-branch prediction on the generic path**, and the lanes
+prove it: a one-type ring sends every `call_ref` to the same target and is
+predicted; a two-type ring alternates and mispredicts. **V8 shows no hump**
+(0.856–0.936 across all nine rings) because it speculatively inlines, so
+predictability of the indirect branch never dominates there. The V8 crossover
+is unchanged at ~80% and still rests on a −0.01 ns endpoint inside its spread,
+so that figure remains the soft one.
 
 **An unexplained anomaly under the threshold, recorded rather than smoothed
 over:** B7's generic path on a *two-type* ring costs 10.12 ns at 3/11, while

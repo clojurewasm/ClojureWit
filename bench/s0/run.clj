@@ -76,6 +76,38 @@
    ;; B7 — the crossover. Five rings of two types, varying only how often the
    ;; guard hits, each measured guarded and generic so the comparison is on one
    ;; ring at a time.
+   {:id "B7g1"
+    :what "crossover: guarded, 1 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_1"
+    :expect #(mod % 11)}
+   {:id "B7n1"
+    :what "crossover: generic dispatch on the same ring, 1 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_1"
+    :expect #(mod % 11)}
+   {:id "B7g2"
+    :what "crossover: guarded, 2 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_2"
+    :expect #(mod % 11)}
+   {:id "B7n2"
+    :what "crossover: generic dispatch on the same ring, 2 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_2"
+    :expect #(mod % 11)}
+   {:id "B7g4"
+    :what "crossover: guarded, 4 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_4"
+    :expect #(mod % 11)}
+   {:id "B7n4"
+    :what "crossover: generic dispatch on the same ring, 4 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_4"
+    :expect #(mod % 11)}
+   {:id "B7g5"
+    :what "crossover: guarded, 5 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_5"
+    :expect #(mod % 11)}
+   {:id "B7n5"
+    :what "crossover: generic dispatch on the same ring, 5 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_5"
+    :expect #(mod % 11)}
    {:id "B7g0"
     :what "crossover: guarded, 0 of 11 steps hit"
     :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_0"

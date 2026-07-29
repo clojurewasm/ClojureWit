@@ -13,10 +13,10 @@ _Short by design, and printed at every session start — so findings live in
    aggregate argument (`doc/design/0007-*`), which is what "a Rust developer
    calls a Clojure component" actually costs, and which no S0 benchmark
    touches. `doc/roadmap.md` places it at the head of S1.
-3. **Measure B7 at k = 1, 2, 4, 5.** The crossover is currently a linear
-   interpolation across a 27-point gap, over a generic control that humps ~20%
-   in the middle for reasons nobody has explained. If that hump is noise, the
-   wasmtime threshold moves from ~25% to ~41%. Ten lines per point.
+3. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+   nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
+   inside its own spread, so the data bounds it only to 70–90%. Points at
+   k = 7, 8, 10 would settle it.
 
 ## Where we are
 
@@ -35,8 +35,8 @@ ns per operation, against JVM Clojure:
 | boxed arithmetic (B3) | 2.98 | **0.93** (0.31×) | **0.91** (0.31×) |
 
 Generic dispatch fails the server lane by 6×; guarded specialisation erases it,
-and starts paying at roughly 25% hit rate on wasmtime against 80% on V8 — the
-3× ratio is robust, the individual figures are ±5 points. Boxed arithmetic wins
+and starts paying at 26.6% hit rate on wasmtime (nine measured points) against
+roughly 80% on V8 (bounded only to 70–90%). Boxed arithmetic wins
 outright on both. `ref.cast` is free by depth and expensive by width. `0004` and
 `0003` both carry amendments for claims these runs falsified.
 

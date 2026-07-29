@@ -26,9 +26,9 @@ guarded specialised site is *not distinguishable* from a direct call, which is
 all the budget needs.
 
 **The condition is per-site guard precision.** A guard that mostly misses is
-worse than no guard: specialising starts paying at roughly **25% hit rate on
-wasmtime and 80% on V8** (B7) — ±5 percentage points, and see "what would
-falsify this" for why those figures are softer than they look. Below the
+worse than no guard: specialising starts paying at **26.6% hit rate on
+wasmtime** (nine measured points) and **roughly 80% on V8** (bounded only to
+70–90%; see "what would falsify this"). Below the
 threshold, specialising loses on that lane.
 
 **Coverage is a different quantity and is unmeasured.** B7 measured *hit rate*
@@ -83,7 +83,10 @@ the bounds belong here rather than only in `0002`'s threats.
 - **Two mechanisms here are inferred, not established.** The
   load-to-indirect-branch recurrence, and B4's reading that what a cast pays for
   is the target having subtypes. No disassembly was read and no performance
-  counter was sampled.
+  counter was sampled. B7b *strengthened* the first — the generic path's cost
+  humps with indirect-branch unpredictability on wasmtime and not at all on V8,
+  which is the asymmetry the recurrence predicts — but strengthening is not
+  establishing.
 - **The dependency-chain shape is pessimistic.** Each dispatch feeds the next,
   so nothing overlaps.
 - **The table is the unoptimised build.** `wasm-opt -O3` inlines the callee in
@@ -118,16 +121,15 @@ the bounds belong here rather than only in `0002`'s threats.
 
 ## What would falsify this
 
-- **A realistic Clojure workload where guard precision lands below 25%.** The
+- **A realistic Clojure workload where guard precision lands below 27%.** The
   falsifier that matters, and it cannot be run before S3.
 - **`bb bench-s0`, at the recorded n and reps, producing a specialised overhead
   above 1 ns, or a wasmtime crossover above 50%.** Stated with tolerances
-  because the crossover figures are softer than two significant figures imply:
-  they are linear interpolations across a 27-percentage-point gap with no
-  intermediate point, over a guarded curve whose slope varies by 60%, against a
-  generic control that is *not* flat — it humps ~20% in the middle for reasons
-  nobody has explained. If that hump is measurement rather than signal, the
-  wasmtime crossover moves from ~25% to ~41%. Measuring k = 1, 2, 4, 5 would
-  settle it and costs ten lines per point.
+  because the two figures are not equally solid. **wasmtime's is now measured
+  at nine points and lands at 26.6%** — the generic control's ~20% hump turned
+  out to be real (indirect-branch prediction, absent on V8, which is what
+  confirms the mechanism), so a flat-control reading of ~41% is ruled out.
+  **V8's ~80% remains soft**: it interpolates onto a −0.01 ns endpoint inside
+  its own spread, so the data bounds it only to roughly 70–90%.
 - **Any of the six failing to reproduce on x86_64 Linux**, which nothing has
   tried.
