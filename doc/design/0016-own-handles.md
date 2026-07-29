@@ -150,6 +150,13 @@ instead of it."
 
 ## Notes for whoever writes the guest
 
+**It exists now:** `dev/resources/res.{wit,wat}`, exercised by
+`test/cljwit/host_test.clj`. It has a constructor, a `borrow`-self method, an
+`own` parameter that transfers, and a `list<counter>` result — one shape for
+each decision above. `bb check` builds it from the committed `.wat`, so this
+note no longer rests on headers alone for what a component *is*; it still does
+for what marshalling one *does*, which is the next commit.
+
 The `--dummy` output does not reveal this and it cost the review an hour: **a
 `borrow` self parameter, lowered into the component that *defines* the
 resource, arrives as the rep itself, not a handle index** — an explicit ABI

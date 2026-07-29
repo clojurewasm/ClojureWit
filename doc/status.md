@@ -13,8 +13,8 @@ _Short by design, and printed at every session start — so findings live in
    `close` as `try { drop } finally { delete }`, lowering an `own` transfers,
    the instance closes outstanding handles before deleting its store) and
    `borrow` is out of scope because it **cannot appear in a return position**.
-   The guest to test it against does not exist yet and is the first thing to
-   write.
+   The guest to test it against now exists (`dev/resources/res.{wit,wat}`) and
+   reflects correctly; what is left is the marshalling.
 2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
    WASI requires them, and nothing has touched them. They also invalidate
    `0014` E's argument-buffer reuse, which is safe today only because no guest

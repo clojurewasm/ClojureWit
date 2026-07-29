@@ -256,3 +256,44 @@
                     (is (= :wasmtime (:cljwit/error (ex-data e)))
                         (str nm " should reach the guest and trap"))))))))
         (finally (.delete ^File c))))))
+
+(deftest a-guest-that-really-implements-a-resource
+  ;; `0016` named this artifact as its own first falsifier: everything it
+  ;; decided rested on headers and on a --dummy component that traps when
+  ;; called. This is the component that answers. Marshalling `own<T>` is not
+  ;; implemented yet, so what is asserted here is that the guest builds, that
+  ;; reflection reads it, and that the unsupported path names the right kind.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping resource guest test")
+    (let [c (build-component! "res")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file c))]
+            (with-open [i (host/instantiate a)]
+              (testing "the resource's methods, its constructor, and both shapes 0016 decides"
+                (is (= #{"local:res/bag@0.1.0#[constructor]counter"
+                         "local:res/bag@0.1.0#[method]counter.bump"
+                         "local:res/bag@0.1.0#consume"
+                         "local:res/bag@0.1.0#make-two"}
+                       (set (host/exports i)))))
+
+              (testing "own and borrow are distinct in the reflected type, not a runtime check"
+                (is (= {:params [["start" :u32]] :result :own}
+                       (host/signature i "local:res/bag@0.1.0#[constructor]counter")))
+                (is (= {:params [["self" :borrow] ["by" :u32]] :result :u32}
+                       (host/signature i "local:res/bag@0.1.0#[method]counter.bump")))
+                (is (= {:params [["c" :own]] :result :u32}
+                       (host/signature i "local:res/bag@0.1.0#consume"))
+                    "an own in parameter position — ownership transfers")
+                (is (= {:params [["start" :u32]]
+                        :result {:kind :list :element :own}}
+                       (host/signature i "local:res/bag@0.1.0#make-two"))
+                    "handles nested in a list, which with-open has no shape for"))
+
+              (testing "until 0016 is implemented, every one of them says so"
+                (doseq [nm ["[constructor]counter" "consume" "make-two"]]
+                  (let [f (i (str "local:res/bag@0.1.0#" nm))
+                        e (is (thrown? clojure.lang.ExceptionInfo (f 1)))]
+                    (is (= :unsupported-type (:cljwit/error (ex-data e))) nm)
+                    (is (some #{:own} (:cljwit/kinds (ex-data e))) nm)))))))
+        (finally (.delete ^File c))))))

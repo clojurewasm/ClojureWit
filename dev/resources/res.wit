@@ -1,0 +1,18 @@
+package local:res@0.1.0;
+
+/// A guest that really implements a resource, so `own<T>` can be checked the
+/// way every other row was. `--dummy` traps when called, which is enough for
+/// reflection and nothing else.
+interface bag {
+  resource counter {
+    constructor(start: u32);
+    /// A `borrow` self parameter, which is what a method really takes.
+    bump: func(by: u32) -> u32;
+  }
+  /// Takes the resource: ownership transfers to the guest.
+  consume: func(c: counter) -> u32;
+  /// Handles the caller never destructured — `0016` D.
+  make-two: func(start: u32) -> list<counter>;
+}
+
+world w { export bag; }
