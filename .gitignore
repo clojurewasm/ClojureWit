@@ -10,3 +10,7 @@
 .nrepl-port
 /result
 /.ref/
+
+# cargo build output for dev/spike/rust_call_cost (Cargo.lock is committed;
+# it pins the wasmtime crate to the version in tools.json)
+dev/spike/rust_call_cost/target/

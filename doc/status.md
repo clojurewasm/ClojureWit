@@ -17,23 +17,26 @@ boundary:
 
 | entry point | Rust | C | JVM/FFM |
 |---|---:|---:|---:|
-| typed / `func_call_unchecked` | 15.2 | 15.5 | 46.1 |
-| untyped `Val` / `func_call` | 61.7 | 75.4 | 102.5 |
-| component call | — | — | 392.8 |
+| core, typed / `func_call_unchecked` | 15.2 | 15.7 | 46.1 |
+| core, untyped `Val` / `func_call` | 58.7 | 74.1 | 102.5 |
+| component, typed | 279.4 | *none* | *none* |
+| component, untyped `Val` | 309.4 | 352.9 | 392.8 |
 
 - **wasmtime's floor is 15 ns**, agreed to 2% by Rust and C independently.
 - **The JVM adds a flat ~27–31 ns**, not a multiple. The binding is not worth
   optimising, which `0011` had right for the wrong reason.
-- **The Component Model is ~74% of a component call** — 3.8× a core call, not
-  the ~20% `0011` claimed. It is where the money is.
+- **The Component Model is ~79% of a component call** — 4.8× a core call
+  measured entirely within C, not the ~20% `0011` claimed. **Typing it back
+  recovers only ~10%**, so the cost is the Canonical ABI, not the `Val` boxing.
+  279 ns is the floor with the best API wasmtime offers, against 15 ns for a
+  core call.
 - **`wasmtime_func_call_unchecked` *is* the fast path** — 2.2× faster from the
   JVM, 4.9× from C, exactly as its header says. `0011`'s "1.7–3.0× slower" was
   an artifact.
 - **`wasmtime_component_func_post_return` is deprecated and a no-op** in 47.0.1.
 
-The C API offers only the untyped component path; the Rust API has typed
-component calls, and **whether that recovers the Component Model's 3.8× is the
-open question a shim would answer** (`0013`). **Against B6 this inverts the
+A Rust shim would buy ~10–20% and is closed as a speed argument (`0013`); the
+segfault-safety argument for one is separate and still open. **Against B6 this inverts the
 emphasis: for payloads under ~30 KB the call dominates the copy.**
 
 **S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
@@ -48,14 +51,11 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Measure a component call from C or Rust.** `0013`'s "the Component Model
-   is 3.8× a core call" is a cross-lane figure with no control on the other
-   side — the largest gap in the accounting, and the one that decides whether a
-   Rust shim with typed component calls is worth building.
-2. **Design `cljwit.host`'s API.** The calling convention is decided (interface
-   proxies, pure Clojure). Do not shape the API around a microsecond floor:
-   `0013` shows there is no such floor, and an API shaped around a cost is hard
-   to unshape once the cost goes away.
+1. **Design `cljwit.host`'s API** is now the only thing S1 is waiting on — the
+   cost structure is closed on every lane that has a control. A component call
+   is ~0.39 µs and ~79% of that is the Canonical ABI, which no binding choice
+   removes. Decide there whether the hand-measured struct offsets stay
+   (`0011` constraint 3) or a shim retires them.
 3. **`0012` is closed for every row whose WIT type we can write today.** The
    echo test (`test/cljwit/roundtrip_test.clj`, 87 assertions, in `bb check`)
    covers the scalars, `string`, `enum`, `option`, nested `option`, `result`,

@@ -137,6 +137,8 @@
                           (run "cc" "-O2" "-o" bin "dev/spike/call_cost.c"
                                (str "-I" (System/getenv "CLJWIT_WASMTIME_INCLUDE"))
                                (str "-L" (babashka.fs/parent lib)) "-lwasmtime")
+                          (when-not (babashka.fs/exists? "dev/resources/add.component.wasm")
+                            (run "bb" "run" "spike-host"))
                           (apply run bin *command-line-args*)))}
 
   spike-cost  {:doc  "S1 spike: what one call costs. One JVM per path. Needs `nix develop`."

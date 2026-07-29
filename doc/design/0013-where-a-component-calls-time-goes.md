@@ -22,10 +22,12 @@ ever been tested against a non-JVM caller.
 
 ## The decision
 
-**wasmtime's floor is ~15 ns, the JVM adds ~27 ns to a core call, and the
-Component Model is ~74% of a component call — not 20%.** The lever is the
-component path, specifically the untyped `wasmtime_component_val_t` convention
-the C API is limited to.
+**wasmtime's floor is ~15 ns, the JVM adds ~27–40 ns, and the Component Model
+is ~79% of a component call — not the 20% `0011` claimed.** And that 79% is
+**not a lever**: it survives the best API wasmtime offers, so it is the
+Canonical ABI's price, not a binding choice. `cljwit.host` should be designed
+knowing a component call costs ~0.3–0.4 µs and that nothing it does will make
+it 15 ns.
 
 ## Why
 
@@ -36,9 +38,10 @@ spike-c-cost`, `bb spike-cost`, and `cargo run --release` in
 
 | entry point | Rust | C | JVM/FFM |
 |---|---:|---:|---:|
-| typed / `func_call_unchecked` | **15.2** | **15.5** | 46.1 |
-| untyped `Val` / `func_call` | 61.7 | **75.4** | 102.5 |
-| component call | — | — | **392.8** |
+| core, typed / `func_call_unchecked` | **15.2** | **15.7** | 46.1 |
+| core, untyped `Val` / `func_call` | 58.7 | **74.1** | 102.5 |
+| component, typed | **279.4** | *no typed path* | *no typed path* |
+| component, untyped `Val` | 309.4 | **352.9** | **392.8** |
 
 - **wasmtime's floor is 15 ns.** Rust's typed call and C's unchecked call agree
   to 2%, from different languages through different APIs.
@@ -50,8 +53,15 @@ spike-c-cost`, `bb spike-cost`, and `cargo run --release` in
   seven parameters, five pointers — costs 17.4 ns through the same proxy
   binding (`bb spike-ffm-shape`), so ~17 ns of that is FFM and the rest is the
   result read.
-- **The Component Model costs 3.8×** — 102.5 → 392.8, about **74%** of a
-  component call.
+- **The Component Model costs 4.8×** — 74.1 → 352.9 measured entirely within C,
+  so it is not a cross-lane artifact and not the JVM's. It is about **79%** of a
+  component call. The JVM's 392.8 sits ~40 ns above C's 352.9, which is the same
+  flat tax as on the core path.
+- **Typing the component call recovers ~10%, not the 4.8×** — 309.4 → 279.4 in
+  Rust, the only place a typed component path exists. On the *core* path typing
+  recovers 75% (58.7 → 15.2). **The Component Model's cost is the Canonical ABI
+  itself — lift and lower — not the `Val` boxing.** 279 ns is the floor with the
+  best API wasmtime offers, against 15 ns for a core call: **18×**.
 
 **`wasmtime_func_call_unchecked` is the fast path**, as its header says: 2.2×
 faster than checked from the JVM, 4.9× from C. `0011` recorded it as
@@ -74,21 +84,27 @@ that's taken care of automatically as part of `wasmtime_component_func_call`."*
   to unshape once the cost goes away.
 - **Blaming the JVM.** It adds 27 ns. This is what the first version of the
   note got wrong.
+- **A Rust shim, for speed.** The first version rejected it on arithmetic that
+  was void; it is now rejected on a measurement. The best case for a shim is
+  Rust's typed component call, and that is 279.4 ns against the 392.8 the JVM
+  pays today — **~113 ns, ~29%**, of which ~40 ns is the JVM tax a shim does not
+  remove and ~44 ns is the C API's. A shim buys ~10–20% and costs a Rust
+  toolchain in the build. The speed argument is closed.
 
-**Reopened, not rejected: a Rust shim.** The first version rejected it on
-cost-recovery arithmetic that is now void. The real case for one is visible and
-untested: the Component Model is 74% of a component call, `0011` §3 established
-that **the C API offers only the untyped `wasmtime_component_val_t` path while
-the Rust API has typed component calls**, and the untyped tax measures 4–5× on
-the core path in both C and Rust. Whether it is the same tax on the component
-path has not been measured, and no component call has ever been made from C or
-Rust. A shim would also retire the hand-measured struct offsets in the spike,
-where being wrong is a segfault that takes the JVM down (`0011` constraint 3).
+  The *safety* argument is not, and is now the only one left: the spike carries
+  hand-measured struct offsets where being wrong is a segfault that takes the
+  JVM down (`0011` constraint 3). That is a different decision from this one and
+  belongs in `cljwit.host`'s API note.
+
+**A second prediction was falsified here.** Rust's typed component call was
+predicted at 100–200 ns on the reasoning that typing removes the `Val` boxing,
+which is worth 4× on the core path. It measured 279.4. The boxing is not what
+the Component Model charges for; the Canonical ABI is. The core path's ratios
+did not transfer to the component path, which is the same mistake as assuming a
+JVM measurement says something about wasmtime.
 
 ## What would falsify this
 
-- **A component call measured from C or Rust.** The 3.8× is a cross-lane figure
-  with no control on the other side; it is the single largest gap here.
 - **The "15 ns floor" outside its shape.** Two i32 parameters, one i32 result,
   one export, no linear memory, no imports, no traps, warm reused `Store`,
   single thread. Nothing about strings, lists, `cabi_realloc` or resources —
@@ -99,6 +115,7 @@ where being wrong is a segfault that takes the JVM down (`0011` constraint 3).
   here should be quoted across processes.**
 - **Any of it on x86_64 Linux**, which nothing has tried — `doc/status.md`
   already owes S0 that axis.
+
 
 ## What went wrong, and what now prevents it
 

@@ -8,6 +8,7 @@
  *   bb spike-c-cost [n] [reps]
  */
 #include <wasmtime.h>
+#include <wasmtime/component.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -91,6 +92,45 @@ static void *bench(void *_unused) {
     if (acc == -1) puts("");
   }
   report("wasmtime_func_call_unchecked", v, reps);
+
+  /* The component lane. 0013's "the Component Model is 3.8x a core call" was a
+     cross-lane ratio with no control on this side of the boundary. */
+  fp = fopen("dev/resources/add.component.wasm", "rb");
+  if (!fp) { puts("no add.component.wasm - run `bb spike-host` first"); return NULL; }
+  fseek(fp, 0, SEEK_END); sz = ftell(fp); rewind(fp);
+  buf = malloc(sz);
+  if (fread(buf, 1, sz, fp) != (size_t)sz) { puts("short read"); return NULL; }
+  fclose(fp);
+
+  wasmtime_component_t *comp;
+  if (wasmtime_component_new(eng, buf, sz, &comp)) { puts("component_new"); return NULL; }
+  wasmtime_component_linker_t *clink = wasmtime_component_linker_new(eng);
+  wasmtime_component_instance_t cinst;
+  if (wasmtime_component_linker_instantiate(clink, ctx, comp, &cinst)) {
+    puts("linker_instantiate"); return NULL;
+  }
+  wasmtime_component_export_index_t *eidx =
+      wasmtime_component_instance_get_export_index(&cinst, ctx, NULL, "add", 3);
+  wasmtime_component_func_t cf;
+  if (!wasmtime_component_instance_get_func(&cinst, ctx, eidx, &cf)) {
+    puts("no component export add"); return NULL;
+  }
+  for (int r = -1; r < reps; r++) {
+    long k = r < 0 ? n / 10 : n;
+    wasmtime_component_val_t cargs[2], cres[1];
+    cargs[0].kind = WASMTIME_COMPONENT_S32; cargs[0].of.s32 = 17;
+    cargs[1].kind = WASMTIME_COMPONENT_S32; cargs[1].of.s32 = 25;
+    long long acc = 0; double t0 = now_ns();
+    for (long i = 0; i < k; i++) {
+      wasmtime_error_t *e = wasmtime_component_func_call(&cf, ctx, cargs, 2, cres, 1);
+      if (e) { puts("component call failed"); return NULL; }
+      acc += cres[0].of.s32;
+    }
+    double dt = now_ns() - t0;
+    if (r >= 0) v[r] = dt / (double)k;
+    if (acc == -1) puts("");
+  }
+  report("wasmtime_component_func_call", v, reps);
   return NULL;
 }
 
