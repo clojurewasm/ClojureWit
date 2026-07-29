@@ -1,29 +1,23 @@
 # 0017 — Host imports: letting a component call Clojure
 
-**Status:** proposed · 2026-07-30 · the mechanism is verified (`bb
-spike-import`); this is the API over it, and no code exists
+**Status:** proposed · 2026-07-30 · rewritten after an adversarial review ran
+every claim. Four of the first draft's five decisions changed, one of them
+because the draft would have aborted the JVM.
 
 ## The question
 
-`cljwit.host` can call a component. It cannot yet be called *by* one, which
-means it refuses every component that imports anything — including all of WASI.
-`0014` named this its most-likely-to-fire falsifier.
+`cljwit.host` can call a component. It cannot yet be called *by* one, so it
+refuses every component that imports anything — including all of WASI.
 
 What is settled, measured 2026-07-30:
 
 - **An FFM upcall stub reaches Clojure from inside a component call.** `bb
-  spike-import`: `run(20) = 41`, the host saw `[20]`. Pure Clojure, bound to a
-  `reify` — no bytecode generation and no C shim, the same answer `0011`
-  reached for the outbound direction.
-- **A component's imports reflect exactly like its exports** — interface,
-  parameter names, types, result — through
+  spike-import`: `run(20) = 41`. Pure Clojure, bound to a `reify`.
+- **Imports reflect exactly like exports**, through
   `wasmtime_component_type_import_count`/`_nth`.
-- **A host callback cannot re-enter the instance that is executing**: `wasm
-  trap: cannot enter component instance`. `0014` D and E survive.
-- **`wasmtime_component_linker_add_wasip2` supplies all of WASI 0.2 in one
-  call**, so hand-writing `wasi:cli` is not the price of entry.
-- **`wasmtime_error_new(const char *)` exists**, so a Clojure exception has
-  somewhere to go.
+- **A host callback cannot re-enter the executing instance**: `wasm trap:
+  cannot enter component instance`. `0014` D and E survive.
+- **`wasmtime_error_new` exists**, so a Clojure exception has somewhere to go.
 
 ## The decision
 
@@ -33,91 +27,177 @@ What is settled, measured 2026-07-30:
 (host/instantiate art {:imports {"local:imp/host@0.1.0#twice" (fn [v] (* 2 v))}})
 ```
 
-The identity is the exact WIT name, `iface#func`, exactly as `0014` B decided
-for exports. One naming rule for both directions.
+The identity is the exact WIT name, `iface#func`, as `0014` B decided. One
+naming rule for both directions.
 
-### B. The host reflects what the component needs and refuses a mismatch, both ways
+**The stubs should not be per-instance, even though the functions are.**
+`Linker.upcallStub` measures **~7 µs warm and 30–160 µs cold**, against a 20 µs
+instantiate; a fresh closure per request means a fresh stub and a fresh linker
+per request. The shape that avoids it — one stub per import *name*, cached on
+the artifact, dispatching through the store's data pointer
+(`wasmtime_store_new(engine, data, finalizer)` / `wasmtime_context_get_data`,
+both present in 47.0.1) to the per-instance Clojure function — keeps A's
+per-request state and makes stubs and linker engine-scoped. **Unimplemented and
+unverified**; recorded because the naive shape has a measured cost.
 
-A missing import throws at `instantiate`, **naming it**. wasmtime's own message
-is `function implementation is missing` with no name, which is a worse version
-of the `nil`-on-typo failure `0014` already rejected.
+### B. The host checks for *extra* imports, and lets wasmtime report missing ones
 
-An import supplied but not needed throws too. A typo silently ignored is the
-same failure wearing the other hat.
+An import supplied but not needed throws at `instantiate`, naming it. A typo
+silently ignored is the `nil`-on-typo failure `0014` rejected.
 
-### C. Marshalling is the same compiled lift and lower, run in the opposite direction
+**Missing imports are wasmtime's to report.** The first draft claimed its
+message was `function implementation is missing` "with no name". That was
+false — it quotes only the innermost line of a chain `ok!` already reads:
 
-An import's parameters are *lifted* into Clojure and its result *lowered* back
-— the mirror of an export. `lift-fn` and `lower-fn` already compile from a
-reflected type tree; nothing new is needed but the direction.
-
-### D. A Clojure exception becomes a `wasmtime_error_t *`, and never unwinds into native frames
-
-The callback catches `Throwable`, converts it with `wasmtime_error_new`, and
-returns it. A JVM exception propagating through a native frame is undefined
-behaviour, and this project has already lost a JVM to a non-unwinding panic
-(`0012`'s surrogate `char`).
-
-### E. WASI is a flag, not a map
-
-```clojure
-(host/instantiate art {:wasi true})
+```
+linker_instantiate: component imports instance `local:imp/host@0.1.0`,
+  but a matching implementation was not found in the linker
+Caused by:
+    0: instance export `twice` has the wrong type
+    1: function implementation is missing
 ```
 
-calls `add_wasip2`. Supplying a hundred functions by hand to run `wasi:cli` is
-not an API, and the C API already refuses to make you.
+Interface and function are both named. And a host-side check is not merely
+redundant, it is **unimplementable** alongside E: reflection reports WASI
+imports identically to user imports, so with WASI on, every WASI import would
+look missing, and wasmtime does not expose the set `add_wasip2` defines. A
+`wasi:` prefix rule is not a substitute — a component can import
+`wasi:notreal/thing@0.2.0`, which passes any prefix rule and fails anyway.
 
-## Why
+### C. Marshalling is **not** the export direction run backwards
 
-**A, because two naming rules would be one too many.** `0014` B paid for the
-exact-WIT-string identity with measurements about keywords; imports do not get
-to relitigate it.
+An import's arguments are lifted the same way — the argument buffer is
+wasmtime's and is invalid after the call, exactly as `0014` E found for
+results, so eager lifting carries over.
 
-**B, because instantiation is the only moment the host knows both sides.** It
-has the component's requirements from reflection and the user's map in hand. A
-mismatch discovered later is discovered by wasmtime, in a message with no name
-in it.
+**The result side does not.** wasmtime takes ownership of what the callback
+writes and **frees it**. Measured: returning a `malloc`'d buffer works;
+returning a pointer into static storage aborts with
+`POINTER_BEING_FREED_WAS_NOT_ALLOCATED` inside
+`wasmtime_component_linker_instance_add_func`'s closure.
 
-**D, because the failure mode is the worst one available.** Every other error
-in this library is an `ex-info`. An exception crossing into wasmtime's frames
-is a crash with no stack trace, and the cost of preventing it is a `try`.
+`host.clj`'s `lower-fn` allocates **every** payload from a
+`java.lang.foreign.Arena` — string bytes, list/tuple/record element buffers,
+flags name vectors, and the boxed vals behind `option`/`result`/`variant`.
+Handing wasmtime an Arena pointer to `free()` is heap corruption. The import
+direction needs `malloc` and `wasmtime_component_val_new`, so `lower-fn` needs
+an allocator parameter rather than a hard-wired arena.
+
+This inverts `0014` E as well: there the host must never `val_delete` a result;
+here the host must never *retain* one.
+
+### D. A Clojure exception becomes a `wasmtime_error_t *` — and kills the instance
+
+The callback catches `Throwable`, converts with `wasmtime_error_new`, returns
+it. A JVM exception unwinding through native frames is fatal: measured, it
+prints the Clojure stack trace and then `Unrecoverable uncaught exception
+encountered. The VM will now exit`.
+
+**But the designed path is not an ordinary error.** Measured: the message does
+reach the caller, and then the store is poisoned — the next call gets `wasm
+trap: cannot enter component instance` without entering the callback, and a
+*new instance in the same store* fails the same way.
+
+So `cljwit.host` must **mark the instance dead** when an import throws, and say
+so. Otherwise a user sees two `ex-info`s that look alike — a WIT `result` err,
+which leaves the instance usable, and a host-import throw, which does not — and
+every later call reports a trap with the cause gone. `0016` recorded exactly
+that failure shape.
+
+The `catch` handler must also be incapable of throwing: `(ex-message e)` can be
+`nil`, and the C string for `wasmtime_error_new` needs an arena alive inside
+the callback.
+
+### E. WASI is a config, not a flag
+
+```clojure
+(host/instantiate art {:wasi {}})     ;; deny-by-default
+```
+
+`add_wasip2` alone **aborts the process**. Measured: it succeeds, `instantiate`
+succeeds, and the first WASI call panics in
+`crates/c-api/src/store.rs:105` — `called Option::unwrap() on a None value` —
+then `fatal runtime error: failed to initiate panic, aborting`. Adding
+`wasmtime_context_set_wasi(cx, wasi_config_new())` makes the same binary print
+a number.
+
+So `:wasi` must carry a `wasi_config_t`, which is a design surface of its own —
+argv, env, stdio, preopens, `inherit_network`, `allow_ip_name_lookup`. **The
+default is a security decision**: `inherit_env` would leak the host
+environment into the guest. Deny-by-default, and every capability named
+explicitly.
+
+The config is consumed by `set_wasi` even on error, so it is per-instantiate,
+not per-artifact. `add_wasip2` costs **0.033–0.037 ms**, against `0014` C's
+0.02 ms instantiate — so turning WASI on nearly triples instantiation.
+
+### F. Resource imports are inside this unit, not after it
+
+A host interface that hands out a handle — which is every one of `wasi:io`'s —
+declares a `resource` item that a map keyed `iface#func` cannot express.
+Measured: `instantiate` fails with `instance export 'token' has the wrong type
+/ resource implementation is missing`. It needs
+`wasmtime_component_linker_instance_add_resource` with a destructor callback (a
+second upcall shape) and `wasmtime_component_resource_host_new` to mint
+handles.
+
+The first draft listed this as a falsifier. It is not one waiting to fire.
 
 ## Alternatives rejected
 
-- **Imports on the artifact rather than the instance.** The linker is
-  engine-scoped, so this would be possible — and it would make every instance
-  share one set of host functions, which is wrong the moment two requests want
-  different state. `0014` C put per-request state on the instance.
-- **A separate `link` step** between `compile` and `instantiate`. Honest about
-  where the linker lives, and a fourth lifetime for something that has no
-  independent lifetime: nothing can use a linker except to instantiate.
-- **Letting a missing import fail lazily**, at the first call. Cheaper to
-  implement and it moves the error away from the mistake.
-- **Requiring an explicit `wasi:cli` map even when `add_wasip2` exists.**
-  Consistent, and unusable.
+- **Imports on the artifact, sharing one set of host functions.** Wrong the
+  moment two requests want different state. But see A: the *stubs* can be
+  artifact-scoped without the *state* being, through the store data pointer,
+  and the first draft rejected artifact scope on the assumption that they
+  could not.
+- **A separate `link` step.** A fourth lifetime for something with no
+  independent lifetime.
+- **Letting a missing import fail lazily**, at the first call. Moves the error
+  away from the mistake — and is now moot, since wasmtime reports it at
+  instantiate with both names.
+- **A host-side missing-import check.** The first draft's B. Removed: its
+  stated justification was false, and it cannot coexist with E.
+- **`{:wasi true}`.** The first draft's E. It aborts the process.
 - **Passing the raw `wasmtime_component_val_t` to the Clojure function.**
   Fastest, and it makes every import a chance to corrupt memory.
 
 ## What would falsify this
 
-- **An import that is not a function.** A component may import a *type* or a
-  *resource*; `wasmtime_component_item_t` has kinds for both. A: the map is
-  keyed by function name and has nowhere to put them.
-- **The upcall stub's lifetime.** It is bound to an `Arena`, and it must
-  outlive every call. If the instance's arena is the wrong scope — say the stub
-  must outlive the *linker* rather than the instance — A is in the wrong place.
-- **`add_wasip2` needing a WASI context on the store.**
-  `wasmtime_context_set_wasi` exists and takes a config; whether `add_wasip2`
-  works without one, and what E should do about the config, is unverified.
-- **Whether a returned error surfaces to the outer caller as an error rather
-  than a trap that poisons the instance.** D assumes it does. Unmeasured.
-- **The cost.** An upcall is not free and nothing here has been timed. If a
-  guest calls a host import in a loop, the number that matters is per-upcall,
-  and `0013`'s discipline applies: predict, then measure.
+- **The store-data-pointer shape in A.** Unimplemented. If the data pointer is
+  already spoken for, or dispatch through it costs more than the 7 µs it saves,
+  A stays naive.
+- **Marking the instance dead being wrong** if some import errors turn out not
+  to poison the store. Measured for one shape; not for a trap raised inside the
+  callback versus an error returned from it.
+- **The `malloc` requirement in C.** Measured through one string result. Lists,
+  records and nested vals are assumed to follow; `wasmtime_component_val_new`'s
+  "the val provided is taken" wording says they should.
+- **A deny-by-default WASI config being unusable** — if the common case needs
+  five capabilities named every time, the shape is wrong even if the default is
+  right.
+- **The upcall cost.** ~7 µs warm is measured; per-call overhead is not, and
+  `0013`'s discipline applies before anyone optimises it.
+
+## What the first draft got wrong
+
+Recorded as `0012`, `0013` and `0016` were.
+
+- **E would have aborted the JVM** on the first WASI call, in a shape the note
+  presented as the convenient one.
+- **B's evidence was false**, and one command contradicted it. Quoting the
+  innermost line of an error chain the library already prints in full is the
+  same shape as `0007`.
+- **C was asserted symmetric because both directions use the same word.**
+  Ownership runs the opposite way, and the existing `lower-fn` would have
+  handed wasmtime Arena pointers to `free`.
+- **F was filed as a falsifier** rather than as work, which would have made
+  every `wasi:io`-shaped interface fail after the design was declared done.
+
+The pattern: four of the five rest on what an API *looks like it should do*.
+The review ran them.
 
 ## Resources
 
 - `dev/resources/imp.{wit,wat}` and `bb spike-import` — the mechanism.
-- `0014` — the naming rule, the lifetimes, and the concurrency check this
-  inherits.
-- `0016` — the other direction of the same marshalling.
+- `0014` — the naming rule, lifetimes and concurrency check this inherits.
+- `0016` — the other direction, and the poisoning failure shape D must avoid.

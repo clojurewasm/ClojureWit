@@ -17,15 +17,15 @@ _Short by design, and printed at every session start — so findings live in
    express today. What is left of `0012` is `map`, `list<T,N>`,
    `stream`/`future` and `error-context`, none of which are in a shipped
    release.
-2. **Host imports.** The mechanism works — an FFM upcall stub reaches Clojure
-   from inside a component call (`bb spike-import`), pure Clojure, no C shim.
-   What is left is the `cljwit.host` API for declaring them. A component's
-   imports reflect exactly like its exports — interface, parameter names,
-   types — and `wasmtime_component_linker_add_wasip2` supplies all of WASI 0.2
-   in one call, so hand-writing `wasi:cli` is not the price of entry. `0014` D and E
-   both **survive**: a host callback cannot re-enter the instance that is
-   executing (`wasm trap: cannot enter component instance`), so the nested
-   call that would clobber the argument buffer cannot happen.
+2. **Host imports (`0017`).** The mechanism works — an FFM upcall stub reaches
+   Clojure from inside a component call (`bb spike-import`), pure Clojure, no C
+   shim. The API is designed and argued, and an adversarial review changed four
+   of its five decisions. Three findings that outlive the note: `add_wasip2`
+   without `wasmtime_context_set_wasi` **aborts the process** at the first WASI
+   call; an import that throws poisons the whole store, not just the call; and
+   wasmtime **frees** what the callback writes, so `lower-fn`'s Arena
+   allocation cannot be reused in that direction. Resource imports are inside
+   this unit, not after it — every `wasi:io` interface needs one.
 3. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
    cannot supply; `0015` declined to be the codegen layer that would, so the
    contract has to shrink instead.
