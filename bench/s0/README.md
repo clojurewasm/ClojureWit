@@ -12,7 +12,7 @@ first run. Do not read them until you have your own expectation.
 | | Module | Measures | Decides |
 |---|---|---|---|
 | **B1** | `b1_protocol.wat` | vtable-slot dispatch: 3 loads + `call_ref`, monomorphic site | Whether the design is viable at all |
-| **B1i/B1c** | (same module) | controls: `call_ref` without the loads, and no dispatch at all | Which half of B1's cost is which |
+| **B1L/B1i/B1c** | (same module) | controls: the same walk at 1 load, 0 loads, and no dispatch | Where in B1 the cost actually is |
 | **B2** | `b2_megamorphic.wat` | the same site with 10 receiver types | Whether we beat the JVM where its per-call-site cache thrashes |
 | **B3** | `b3_arith.wat` | `i31` fast-path add vs a boxed slow path | Whether boxed arithmetic can be cheap |
 | **B4** | `b4_cast_depth.wat` | `ref.cast` at hierarchy depth 2 vs 6 | How flat the type graph has to be |
@@ -39,8 +39,15 @@ command to reproduce, which is what gets pasted into
 `doc/design/0002-measure-first.md` alongside the numbers.
 
 Every lane's result is checked against the value the benchmark is supposed to
-compute, and a mismatch stops the run. A benchmark that is fast because it
-stopped doing the work reports as a failure, not as a good number.
+compute, and a mismatch stops the run. The driver also refuses an `n` whose
+expected answer is the one an empty loop would return — for a ring walk that is
+any multiple of the ring length, and without the check a benchmark doing no work
+passes. Both guards were confirmed by breaking the benchmark on purpose.
+
+**Controls are not optional here.** A benchmark and the variant you subtract
+from it usually differ in more than one way, and the difference is then not an
+attribution — see `.claude/rules/measurement.md`, and the B1 incident in
+`doc/status.md` that put the rule there.
 
 ## Each module exports
 

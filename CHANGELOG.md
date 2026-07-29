@@ -12,6 +12,6 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
 - A pinned toolchain: `flake.nix` for exactness, `tools.json` as the shared
   version SSOT for machines without Nix.
 - **S0 B1** — hand-written WasmGC protocol dispatch, measured on V8 and
-  wasmtime against a JVM Clojure baseline, with two controls that separate the
-  vtable loads from the indirect call. `bb bench-s0` runs it. First real numbers
-  in the project: `doc/design/0002-measure-first.md`.
+  wasmtime against a JVM Clojure baseline, with three controls forming a curve
+  in how far the call target sits from the receiver. `bb bench-s0` runs it.
+  First real numbers in the project: `doc/design/0002-measure-first.md`.

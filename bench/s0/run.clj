@@ -24,19 +24,23 @@
 ;; is fast because it is computing the wrong thing has to fail, not just print.
 (def benchmarks
   [{:id "B1"
-    :what "vtable-slot protocol dispatch, monomorphic"
+    :what "vtable-slot protocol dispatch, monomorphic — 3 loads + call_ref"
     :wat "bench/s0/b1_protocol.wat" :export "bench"
     :jvm "s0.jvm.b1" :variant "dispatch"
-    :expect #(mod % 10)}
+    :expect #(mod % 11)}
+   {:id "B1L"
+    :what "control: call_ref, target one load off the receiver — the collapsed vtable"
+    :wat "bench/s0/b1_protocol.wat" :export "bench_one_load"
+    :expect #(mod % 11)}
    {:id "B1i"
-    :what "control: call_ref through a global — the indirect call, without the loads"
+    :what "control: call_ref with the target in hand — no load off the receiver"
     :wat "bench/s0/b1_protocol.wat" :export "bench_indirect"
-    :expect #(mod % 10)}
+    :expect #(mod % 11)}
    {:id "B1c"
     :what "control: the same ring walk with the dispatch removed"
     :wat "bench/s0/b1_protocol.wat" :export "bench_direct"
     :jvm "s0.jvm.b1" :variant "direct"
-    :expect #(mod % 10)}])
+    :expect #(mod % 11)}])
 
 ;; --- shelling out ----------------------------------------------------------
 
@@ -88,6 +92,19 @@
            "--enable-reference-types" "--enable-exception-handling"
            raw "-o" opt)
        {:raw raw :opt opt}))))
+
+(defn- check-n!
+  "Refuses an n whose expected answer is the one a loop that ran zero iterations
+   would also give. These benchmarks return a position in a ring, so at a
+   multiple of the ring length the walk ends where it started and the result
+   check below cannot tell a full benchmark from an empty one. Found by
+   deliberately emptying the loop and watching the check pass."
+  [{:keys [id expect]} n]
+  (when (= (expect n) (expect 0))
+    (println (format "\n✗ %s: n=%d makes the result check vacuous — it expects %s,"
+                     id n (expect n)))
+    (println "  which is also what a loop running zero iterations returns. Pick another n.")
+    (System/exit 1)))
 
 (defn- summarize
   "Checks the lane computed what the benchmark claims before reporting a time.
@@ -163,8 +180,9 @@
                      "—"))))
 
 (defn- run-benchmark [{:keys [id what wat export] :as bm} opts]
+  (check-n! bm (:n opts))
   (println (format "\n%s — %s" id what))
-  (println (format "  n=%d  reps=%d  warmup=%d  (%s, export %s)"
+  (println (format "  n=%d  reps=%d  warmup=%d (in-process lanes only)  (%s, export %s)"
                    (:n opts) (:reps opts) (:warmup opts) wat export))
   (println (format "  %-26s %8s %11s %10s %9s"
                    "lane" "ns/op" "min ns/op" "result" "vs JVM"))
@@ -182,13 +200,20 @@
 
 ;; --- entry point -----------------------------------------------------------
 
+(defn- positive-long [flag s]
+  (let [v (some-> s parse-long)]
+    (when-not (and v (pos? v))
+      (println (format "✗ %s needs a positive integer, got %s" flag (pr-str s)))
+      (System/exit 1))
+    v))
+
+(def ^:private flags {"--n" :n "--reps" :reps "--warmup" :warmup})
+
 (defn- parse-args [args]
   (loop [args args opts {:n 20000000 :reps 20 :warmup 5} ids []]
     (if-let [a (first args)]
-      (case a
-        "--n"      (recur (drop 2 args) (assoc opts :n (parse-long (second args))) ids)
-        "--reps"   (recur (drop 2 args) (assoc opts :reps (parse-long (second args))) ids)
-        "--warmup" (recur (drop 2 args) (assoc opts :warmup (parse-long (second args))) ids)
+      (if-let [k (flags a)]
+        (recur (drop 2 args) (assoc opts k (positive-long a (second args))) ids)
         (recur (rest args) opts (conj ids a)))
       [opts (set ids)])))
 

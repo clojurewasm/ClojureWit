@@ -21,7 +21,9 @@
   PLink
   (set-next! [_ n] (set! nxt n)))
 
-(def ring-len 10)
+;; Matches $ring-len in the WAT. Prime, so that the driver can refuse an n whose
+;; expected answer is also what a loop running zero iterations returns.
+(def ring-len 11)
 
 (defn- ring
   "A cycle of `k` nodes, all of one type — so the call site below sees exactly
@@ -36,7 +38,7 @@
 (def ^:private head (ring ring-len))
 
 (defn walk
-  "n protocol dispatches; returns the final node's tag, which is (mod n 10)."
+  "n protocol dispatches; returns the final node's tag, which is (mod n 11)."
   ^long [^long n]
   (loop [o head i n]
     (if (zero? i)

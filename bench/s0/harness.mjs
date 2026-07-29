@@ -11,9 +11,21 @@
 import { readFileSync } from "node:fs";
 
 const [, , path, exportName, nArg, repsArg, warmupArg] = process.argv;
-const n = Number(nArg);
-const reps = Number(repsArg);
-const warmup = Number(warmupArg);
+
+// Missing or junk counts must fail here rather than produce an empty sample set
+// and a result of 0 — which for a ring walk is a value the driver might well be
+// expecting, so it would read as a pass.
+const count = (name, s, min) => {
+  const v = Number(s);
+  if (!Number.isInteger(v) || v < min) {
+    throw new Error(`${name}: expected an integer >= ${min}, got ${JSON.stringify(s)}`);
+  }
+  return v;
+};
+
+const n = count("n", nArg, 1);
+const reps = count("reps", repsArg, 1);
+const warmup = count("warmup", warmupArg, 0);
 
 const instance = new WebAssembly.Instance(
   new WebAssembly.Module(readFileSync(path)),

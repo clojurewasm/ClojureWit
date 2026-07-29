@@ -15,7 +15,19 @@
 ;; shape of the dispatch Clojure actually does most (seq traversal).
 ;;
 ;; Every node here has the same type, so the site is monomorphic — one vtable,
-;; always in cache. b2_megamorphic.wat is the identical harness with ten types.
+;; always in cache. B2 will be the identical harness with ten types.
+;;
+;; Four exports form a curve in *how far the funcref is from the receiver*, so
+;; the cost can be attributed rather than guessed at:
+;;
+;;   bench_direct     no funcref at all — a direct call
+;;   bench_indirect   call_ref, target from a global      (0 loads)
+;;   bench_one_load   call_ref, target from a field on $obj (1 load)
+;;   bench            call_ref, target through the vtable (3 loads)
+;;
+;; Subtracting two of these tells you what those two differ by, which is not the
+;; same as telling you what one level of indirection costs. The curve is what
+;; separates "each level costs something" from "the first load costs everything".
 
 (module
   ;; WasmGC subtyping is nominal and these four types are mutually recursive
@@ -27,19 +39,28 @@
     (type $vtables (struct (field $a1 (ref $vt1))))
     (type $obj (sub (struct
       (field $hash (mut i32))
-      (field $vt (ref $vtables)))))
+      (field $vt (ref $vtables))
+      ;; The collapsed vtable the design would build if levels turned out to
+      ;; cost: the arity-1 slot 0 method, reachable in one load. Present only so
+      ;; bench_one_load can measure whether collapsing is worth doing.
+      (field $slot0 (ref null $fn1)))))
     (type $node (sub $obj (struct
       (field $hash (mut i32))
       (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
       (field $nxt (mut (ref null $obj)))
       (field $tag (mut i32))))))
 
+  ;; Prime, and the driver refuses an n that is a multiple of it. Otherwise the
+  ;; walk's answer at the published n is the head's own tag, which is also what
+  ;; a loop that ran zero iterations returns — and the result check would pass a
+  ;; benchmark doing no work at all.
+  (global $ring-len i32 (i32.const 11))
   (global $ring-head (mut (ref null $obj)) (ref.null $obj))
-  (global $ring-len i32 (i32.const 10))
-  ;; Holds the same method $bench-indirect reaches through, so that walk pays
-  ;; call_ref without paying the vtable loads. Set in $setup rather than
+  ;; The same method bench_indirect reaches through, so that walk pays call_ref
+  ;; without paying any load off the receiver. Set in $setup rather than
   ;; initialised here so the engine cannot treat it as a known constant.
-  (global $slot0 (mut (ref null $fn1)) (ref.null $fn1))
+  (global $global-slot0 (mut (ref null $fn1)) (ref.null $fn1))
 
   (elem declare func $node-pnext)
 
@@ -50,37 +71,39 @@
 
   (func $setup
     (local $vt (ref null $vtables))
+    (local $fn (ref null $fn1))
     (local $head (ref null $node))
     (local $prev (ref null $node))
     (local $cur (ref null $node))
     (local $i i32)
+    (local.set $fn (ref.func $node-pnext))
     (local.set $vt
-      (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $node-pnext))))
+      (struct.new $vtables (array.new_fixed $vt1 1 (local.get $fn))))
     (local.set $head
-      (struct.new $node
-        (i32.const 0) (ref.as_non_null (local.get $vt)) (ref.null $obj) (i32.const 0)))
+      (struct.new $node (i32.const 0) (ref.as_non_null (local.get $vt))
+                        (local.get $fn) (ref.null $obj) (i32.const 0)))
     (local.set $prev (local.get $head))
     (local.set $i (i32.const 1))
     (block $done
       (loop $l
         (br_if $done (i32.ge_u (local.get $i) (global.get $ring-len)))
         (local.set $cur
-          (struct.new $node
-            (i32.const 0) (ref.as_non_null (local.get $vt)) (ref.null $obj) (local.get $i)))
+          (struct.new $node (i32.const 0) (ref.as_non_null (local.get $vt))
+                            (local.get $fn) (ref.null $obj) (local.get $i)))
         (struct.set $node $nxt (local.get $prev) (local.get $cur))
         (local.set $prev (local.get $cur))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $l)))
     (struct.set $node $nxt (local.get $prev) (local.get $head))
     (global.set $ring-head (local.get $head))
-    (global.set $slot0
+    (global.set $global-slot0
       (array.get $vt1 (struct.get $vtables $a1 (ref.as_non_null (local.get $vt)))
                  (i32.const 0))))
 
   (start $setup)
 
-  ;; Returns the final node's tag so the chain has an observable result. With a
-  ;; ring of 10, the answer is (n mod 10) — the harness checks it.
+  ;; Returns the final node's tag, so the chain has a result that depends on how
+  ;; many times round the ring it went: (n mod 11).
   (func $bench (export "bench") (param $n i32) (result i32)
     (local $o (ref null $obj))
     (local $i i32)
@@ -99,16 +122,28 @@
         (br $l)))
     (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
 
-  ;; Control: the identical ring walk with the three loads and the call_ref
-  ;; replaced by a direct call. Without it, `bench` measures dispatch *plus* the
-  ;; latency of chasing a pointer ring, and there is no way to say which of the
-  ;; two a slow number belongs to.
-  ;;
-  ;; bench_indirect sits between the two: it pays the call_ref but reaches the
-  ;; target through a global instead of the receiver's vtable, so the three
-  ;; loads are gone. The design note claims a cost of "three loads and an
-  ;; indirect call"; these three exports are what say which half is which, and
-  ;; therefore whether flattening the vtable would buy anything.
+  ;; One load off the receiver instead of three. This is the collapsed vtable —
+  ;; if indirection levels are what cost, this lands two thirds of the way back
+  ;; to bench_indirect; if the first dependent load is what costs, it lands on
+  ;; top of bench.
+  (func $bench-one-load (export "bench_one_load") (param $n i32) (result i32)
+    (local $o (ref null $obj))
+    (local $i i32)
+    (local.set $o (global.get $ring-head))
+    (local.set $i (local.get $n))
+    (block $done
+      (loop $l
+        (br_if $done (i32.eqz (local.get $i)))
+        (local.set $o
+          (call_ref $fn1
+            (local.get $o)
+            (struct.get $obj $slot0 (local.get $o))))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (br $l)))
+    (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
+
+  ;; call_ref with the target already in hand — no load off the receiver at all.
+  ;; The floor for an indirect call on this walk.
   (func $bench-indirect (export "bench_indirect") (param $n i32) (result i32)
     (local $o (ref null $obj))
     (local $i i32)
@@ -117,11 +152,13 @@
     (block $done
       (loop $l
         (br_if $done (i32.eqz (local.get $i)))
-        (local.set $o (call_ref $fn1 (local.get $o) (global.get $slot0)))
+        (local.set $o (call_ref $fn1 (local.get $o) (global.get $global-slot0)))
         (local.set $i (i32.sub (local.get $i) (i32.const 1)))
         (br $l)))
     (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
 
+  ;; No dispatch at all. What is left is the cost of chasing the ring, which
+  ;; every other export also pays and none of them is measuring.
   (func $bench-direct (export "bench_direct") (param $n i32) (result i32)
     (local $o (ref null $obj))
     (local $i i32)

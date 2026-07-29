@@ -38,6 +38,17 @@ reproduced is worse than no number, because it gets quoted.
   work whose result is unused. Consume the result — accumulate it and print it.
 - **State the prediction first.** `doc/design/0002-measure-first.md` records
   predictions before runs, and the prediction column is never edited afterwards.
+- **A difference between two variants is not an attribution.** Subtracting B
+  from A tells you what A and B differ by. If they differ in more than one way,
+  naming one of those ways as the cause is a guess wearing a number. Vary the
+  suspected cause on its own and measure the *curve*; if the cost does not
+  scale with it, it was not the cause. This rule is here because the project
+  did exactly this twice — see `doc/status.md`'s incidents — the second time
+  inside the note warning against it, and was wrong by 50×.
+- **A benchmark that stops doing the work must fail, not pass.** Check the
+  result against what the benchmark claims to compute, then check that the
+  expected value is not also what a loop running zero iterations would return.
+  Confirm both by breaking the thing on purpose and watching the run stop.
 
 ## When the number disagrees with the design
 
