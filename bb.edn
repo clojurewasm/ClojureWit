@@ -127,6 +127,21 @@
                                (run "cc" "-O2" "-shared" "-fPIC" "-o" so "dev/spike/noop7.c")
                                (run "clojure" "-M:dev" "-m" "cljwit.spike.ffm-shape")))}
 
+  spike-reflect {:doc "Can a component describe itself at run time? See 0014."
+                 :task (do (babashka.fs/create-dirs "target")
+                           (run "wasm-tools" "parse" "dev/resources/echo.wat" "-o" "target/echo.core.wasm")
+                           (run "wasm-tools" "component" "embed" "dev/resources/echo.wit"
+                                "target/echo.core.wasm" "-o" "target/echo.embed.wasm")
+                           (run "wasm-tools" "component" "new" "target/echo.embed.wasm"
+                                "-o" "target/echo.component.wasm")
+                           (let [bin "target/spike-reflect"]
+                             (run "cc" "-O2" "-o" bin "dev/spike/reflect.c"
+                                  (str "-I" (System/getenv "CLJWIT_WASMTIME_INCLUDE"))
+                                  (str "-L" (babashka.fs/parent (System/getenv "CLJWIT_WASMTIME_LIB")))
+                                  "-lwasmtime")
+                             (apply run bin (or (seq *command-line-args*)
+                                                ["target/echo.component.wasm"]))))}
+
   spike-c-cost {:doc "The C control for spike-cost: same C API, caller is C not the JVM."
                 :task (if-not (System/getenv "CLJWIT_WASMTIME_INCLUDE")
                         (do (println "CLJWIT_WASMTIME_INCLUDE is unset — run inside `nix develop`")
