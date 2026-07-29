@@ -6,7 +6,7 @@
   ;; one means handing back the same (ptr, len) — no copy. What it does need is
   ;; the two things doc/design/0007 named: an exported memory and cabi_realloc.
   (memory (export "memory") 1)
-  (global $next (mut i32) (i32.const 32))
+  (global $next (mut i32) (i32.const 48))
   (func (export "cabi_realloc")
         (param $old i32) (param $old-sz i32) (param $align i32) (param $new-sz i32)
         (result i32)
@@ -44,6 +44,16 @@
     (i32.store (i32.const 20) (local.get $d1))
     (i32.store (i32.const 24) (local.get $v))
     (i32.const 16))
+
+  ;; result<u32, string> flattens to a discriminant plus the join of the two
+  ;; payloads: (disc, u32-or-ptr, unused-or-len). Its return area is the twelve
+  ;; bytes at 32.
+  (func (export "echo-result")
+        (param $disc i32) (param $a i32) (param $b i32) (result i32)
+    (i32.store (i32.const 32) (local.get $disc))
+    (i32.store (i32.const 36) (local.get $a))
+    (i32.store (i32.const 40) (local.get $b))
+    (i32.const 32))
 
   (func (export "echo-bool") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-s32") (param $v i32) (result i32) (local.get $v))

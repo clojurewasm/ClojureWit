@@ -28,4 +28,9 @@ world echo {
   /// The row that makes L1 concrete: none and some(none) are distinct here and
   /// both become nil in Clojure.
   export echo-option-option-u32: func(v: option<option<u32>>) -> option<option<u32>>;
+
+  /// 0012's largest contested decision: result is the *type* mapping
+  /// ([:ok v] / [:err e]) and throwing is return-position sugar. This checks
+  /// that the tagged form round-trips, which the sugar is defined in terms of.
+  export echo-result: func(v: result<u32, string>) -> result<u32, string>;
 }

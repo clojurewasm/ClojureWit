@@ -39,7 +39,12 @@
 (def ^:private VAL 32)
 (def ^:private UNION 8)
 (def ^:private KIND {:bool 0 :u32 6 :u64 8 :s32 5 :f32 9 :f64 10 :char 11
-                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18})
+                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18 :result 19})
+
+;; wasmtime_component_valresult_t is {bool is_ok; val *val;} — measured, so
+;; is_ok is one byte at the union offset and the pointer is eight past it.
+(def ^:private RES-OK 8)
+(def ^:private RES-VAL 16)
 
 ;; wasm_name_t is {size_t size; char *data;} — 16 bytes, size at 0, data at 8 —
 ;; measured against the pinned headers, and it sits at the union offset.
@@ -191,6 +196,22 @@
                                                (u32val (second x)))))))]
             (.set args ADDR (long UNION)
                   (if (= :none v) MemorySegment/NULL (inner (second v)))))
+          ;; [:ok v] / [:err e] — the *type* mapping. The throwing form is
+          ;; sugar defined on top of this, and is exercised below.
+          :result
+          (let [[tag payload] v
+                inner ^MemorySegment (.allocate arena (long VAL))]
+            (if (= :ok tag)
+              (do (.set inner I8 (long 0) (byte (KIND :u32)))
+                  (.set inner I32 (long UNION) (unchecked-int payload)))
+              (let [b   (.getBytes ^String payload "UTF-8")
+                    buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
+                (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
+                (.set inner I8 (long 0) (byte (KIND :string)))
+                (.set inner I64 (long (+ UNION STR-SIZE)) (long (alength b)))
+                (.set inner ADDR (long (+ UNION STR-DATA)) buf)))
+            (.set args I8 (long RES-OK) (byte (if (= :ok tag) 1 0)))
+            (.set args ADDR (long RES-VAL) inner))
           :string (let [b   (.getBytes ^String v "UTF-8")
                         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
@@ -228,6 +249,16 @@
                          :none
                          [:some (bit-and (long (.get (.reinterpret innr VAL) I32 (long UNION)))
                                          0xFFFFFFFF)])])))
+          :result
+          (let [ok? (not= 0 (.get res I8 (long RES-OK)))
+                p   ^MemorySegment (.reinterpret (.get res ADDR (long RES-VAL)) VAL)]
+            (if ok?
+              [:ok (bit-and (long (.get p I32 (long UNION))) 0xFFFFFFFF)]
+              (let [n (.get p I64 (long (+ UNION STR-SIZE)))
+                    d ^MemorySegment (.get p ADDR (long (+ UNION STR-DATA)))
+                    b (byte-array n)]
+                (MemorySegment/copy (.reinterpret d n) I8 0 b 0 (int n))
+                [:err (String. b "UTF-8")])))
           :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
                         p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
                         b (byte-array n)]
@@ -358,6 +389,39 @@
             "none and some(none) are indistinguishable under 0012's rule")
         (is (= 9 (as-0012 [:some [:some 9]]))
             "a nested some still carries its value")))))
+
+(defn- unwrap
+  "0012's return-position sugar, defined on the tagged form: `(f ...)` returns
+   the ok payload and throws on error, carrying the lifted E under :wit/error.
+   `(f* ...)` would return the tagged value unchanged."
+  [[tag payload]]
+  (if (= :ok tag)
+    payload
+    (throw (ex-info "component call returned err" {:wit/error payload}))))
+
+(deftest results-round-trip-and-the-sugar-is-defined-on-them
+  (with-echo
+    (fn [echo]
+      (testing "the tagged form is the type mapping, and it round-trips"
+        (doseq [v [[:ok 0] [:ok 7] [:ok 4294967295] [:err "boom"] [:err ""]]]
+          (is (= v (echo "echo-result" :result v)) (str "result " (pr-str v)))))
+
+      (testing "the throwing wrapper is sugar over it, not a second mapping"
+        (is (= 7 (unwrap (echo "echo-result" :result [:ok 7]))))
+        (let [e (try (unwrap (echo "echo-result" :result [:err "boom"]))
+                     nil
+                     (catch clojure.lang.ExceptionInfo ex ex))]
+          (is (some? e) "err throws")
+          (is (= "boom" (:wit/error (ex-data e)))
+              "and the lifted E survives in ex-data, so nothing is lost")))
+
+      (testing "which is why result cannot only be the throw"
+        ;; A result nested inside another type never reaches return position,
+        ;; so a mapping defined only as "it throws" has nothing to say about it.
+        ;; The tagged form is a value and composes; the sugar is applied at one
+        ;; place and cannot.
+        (is (= [:err "boom"] (echo "echo-result" :result [:err "boom"]))
+            "an err is an ordinary value here, not an exception")))))
 
 (deftest char-boundaries
   (with-echo
