@@ -42,6 +42,7 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor. That difference — 0.06 ns — is *below this benchmark's own resolution* (a re-run gives 0.15), so the honest statement is **indistinguishable from the direct-call floor**, which is what the 1 ns budget needs. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
 | B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover roughly **25% on wasmtime, 80% on V8**, ±5 points — the **3× ratio between lanes is the robust part** (a re-run reproduces 3.06× against 3.04×); the individual figures are not, for three reasons recorded below. |
 | B7b | is B7's generic-control hump signal or noise? k = 1, 2, 4, 5 | **recorded 2026-07-29, before the run.** The hump is **real, and it is indirect-branch prediction on the generic path**: at k=0 and k=11 the ring holds one type so `call_ref` always goes to the same target and is predicted; in between it alternates between two, and mispredicts. That predicts the new points **trace a smooth hump rather than a flat 8.5**, and the wasmtime crossover stays near 25% rather than moving to 41%. Falsified if k=1 and k=2 come in flat at the endpoint value. It does not explain why B2's *ten*-type ring (9.22) is cheaper than this two-type one (10.12), and that stays open. | **confirmed, and the lane asymmetry confirms the mechanism.** The generic control traces a smooth hump — 8.51, 9.09, 9.31, 10.12, 10.12, 10.55, 10.31, 9.24, 8.50 — rising from both single-type endpoints toward the middle. **On V8 there is no hump at all** (0.856–0.936 across every ring), which is what "the engine speculates, so indirect-branch predictability does not dominate" predicts. The wasmtime crossover lands at **26.6%**, so ~25% stands and 41% is ruled out. The ten-vs-two-type anomaly is untouched and stays open. |
+| B6 | the component boundary: what an aggregate argument costs to lower into linear memory | **recorded 2026-07-30, before the run.** WasmGC has **no bulk copy from a GC array into linear memory** — `array.copy` is array→array and `array.new_data`/`init_data` read a *data segment*, not memory (checked against zwasm's opcode set, a full Wasm 3.0 GC implementation). So the Canonical ABI's lowering is a per-element loop, and the prediction is: **`(array i8)` ≈ 0.5 ns/byte on wasmtime; `(array i64)` ≈ 8× better** because it moves eight bytes per iteration; **`memory.copy` ≈ 0.02 ns/byte**, memcpy-class, which is what a linear-memory language pays. If so the byte path is ~25× a Rust component's and the i64 path ~3×, and `0008` licenses choosing the wider representation. **Falsified if `(array i64)` is not ~8× `(array i8)`** — then the cost is not per-element loop overhead and the representation lever is worthless. | **confirmed on the lever, wrong on the ratios.** `(array i64)` is **7.5×** `(array i8)` on wasmtime and 7.1× on V8, so the representation lever is real. But `memory.copy` came in at **0.0086 ns/byte**, 2.3× better than predicted, so the gap to a linear-memory language is **worse** than predicted: 72× naive and **9.6× even with the i64 representation**, against the predicted 25× and 3×. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -363,6 +364,42 @@ inside the spread. It does not need to be an opt-out.
 primitives". Boxed: we win 3.2×. Unboxed: we lose 2.1×. One benchmark, both
 directions, which is a better test of that claim than either half alone.
 
+## B6 — measured 2026-07-30. The boundary costs ~10× a linear-memory language.
+
+4 KB payload, `n` counting whole payload copies, so the driver's ns/op is ns
+per 4 KB. `bb bench-s0 B6l8 B6l64 B6lift B6mc B6ac --n 20011 --reps 20`.
+
+| | wasmtime ns/4 KB | ns/byte | V8 ns/4 KB | ns/byte |
+|---|---|---|---|---|
+| `(array i8)` → memory, byte loop | **2543.6** | 0.621 | 1288.4 | 0.315 |
+| `(array i64)` → memory, 8 bytes/iter | **338.9** | 0.083 | 180.7 | 0.044 |
+| memory → `(array i8)`, lifting | 2224.0 | 0.543 | 1592.4 | 0.389 |
+| `memory.copy` — the linear-memory floor | **35.3** | 0.0086 | 36.8 | 0.0090 |
+| `array.copy` — GC to GC, for reference | 51.1 | 0.0125 | 66.7 | 0.0163 |
+
+**1. The representation lever works and `0008` licenses it.** Holding byte
+payloads as `(array i64)` instead of `(array i8)` is **7.5× cheaper** at the
+boundary on wasmtime (7.1× on V8), because the copy is a per-element loop and
+each element carries eight bytes instead of one. No program can observe the
+difference, so `0008` says it is ours to choose — this is that principle paying
+for itself.
+
+**2. The boundary still costs ~10× what a linear-memory language pays.** A Rust
+component moves a 4 KB argument for **35 ns**; a Clojure one for **339 ns** at
+best and 2544 ns done naively. That is the price of `0007`'s finding, quantified.
+
+**3. The gap has an exact shape: the missing instruction.** `array.copy` moves
+the same 4 KB GC-to-GC for **51 ns** — near memcpy class. The bulk move exists;
+it simply cannot reach linear memory, because WasmGC has no array↔memory copy
+at all (`array.new_data`/`init_data` read a *data segment*, a compile-time
+constant). **If that instruction existed, the boundary would cost ~51 ns rather
+than 339 — a further 6.6×.** That is a concrete thing to want from the spec, and
+it is a smaller ask than [component-model#525], which would remove the copy
+entirely.
+
+**4. Scalar-only exports still cost nothing**, per `0007`. This is a cost per
+*aggregate* argument, and a component whose interface is scalars pays none of it.
+
 **Threats to validity, recorded so the number is not over-read.**
 
 - The benchmark is a **dependency chain** — each dispatch's result is the next
@@ -393,6 +430,13 @@ directions, which is a better test of that claim than either half alone.
 - **B5's guard tests one type.** A real specialised site with several candidates
   needs several guards or a switch, and nothing here says what the second and
   third cost. The 0.06 ns result is the best case by construction.
+- **B6 measures throughput on a 4 KB payload, not per-call cost.** Real WIT
+  arguments are often tens of bytes, where a fixed per-call constant — which
+  nothing here isolates — would dominate instead. The ~10× ratio is a
+  large-payload statement.
+- **B6's copies are hot and aligned.** Both buffers stay resident across
+  20,011 iterations, so nothing here prices a cold destination or the
+  `cabi_realloc` call that a real lowering makes first.
 - **B3's unboxed floor is the weakest number in the set.** JVM Clojure's is
   0.109 ns — about 0.4 cycles per iteration — which is fast enough that C2 has
   probably strength-reduced or vectorised a loop whose result is a linear

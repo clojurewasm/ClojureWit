@@ -193,6 +193,29 @@
     :what "control: the same i31 round-trip without the overflow check"
     :wat "bench/s0/b3_arith.wat" :export "bench_nocheck"
     :expect identity}
+   ;; B6 — the component boundary. n counts whole 4 KB payload copies, so the
+   ;; driver's ns/op is ns per 4 KB. Run these at a much smaller n than the
+   ;; dispatch benchmarks: `bb bench-s0 B6l8 B6l64 B6lift B6mc B6ac --n 20000`.
+   {:id "B6l8"
+    :what "boundary: (array i8) -> linear memory, one byte per iteration"
+    :wat "bench/s0/b6_boundary.wat" :export "lower_i8"
+    :expect #(if (zero? %) % (inc %))}
+   {:id "B6l64"
+    :what "boundary: (array i64) -> linear memory, eight bytes per iteration"
+    :wat "bench/s0/b6_boundary.wat" :export "lower_i64"
+    :expect #(if (zero? %) % (inc %))}
+   {:id "B6lift"
+    :what "boundary: linear memory -> (array i8), the lifting direction"
+    :wat "bench/s0/b6_boundary.wat" :export "lift_i8"
+    :expect #(if (zero? %) % (inc %))}
+   {:id "B6mc"
+    :what "floor: memory.copy — what a linear-memory language pays"
+    :wat "bench/s0/b6_boundary.wat" :export "memcpy"
+    :expect #(if (zero? %) % (inc %))}
+   {:id "B6ac"
+    :what "reference: array.copy — the bulk move that exists, GC to GC"
+    :wat "bench/s0/b6_boundary.wat" :export "arraycopy"
+    :expect #(if (zero? %) % (inc %))}
    {:id "B3u"
     :what "floor: the same loop unboxed — a raw i32 add"
     :wat "bench/s0/b3_arith.wat" :export "bench_unboxed"
@@ -245,8 +268,13 @@
        (fs/create-dirs out-dir)
        (sh "wasm-tools" "parse" wat "-o" raw)
        (sh "wasm-tools" "validate" raw)
+       ;; Every feature any benchmark uses has to be named or wasm-opt refuses
+       ;; the whole module — bulk-memory-opt was added when B6 introduced
+       ;; memory.copy, and the failure is a build error rather than a wrong
+       ;; number, which is the good kind.
        (sh "wasm-opt" "-O3" "--enable-gc" "--enable-tail-call"
            "--enable-reference-types" "--enable-exception-handling"
+           "--enable-bulk-memory" "--enable-bulk-memory-opt"
            raw "-o" opt)
        {:raw raw :opt opt}))))
 

@@ -13,17 +13,11 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Record a B6 prediction in `doc/design/0002-*` before writing any of it.**
-   B6 has no row in that table yet, and the table is the discipline.
-2. **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
-   aggregate argument (`doc/design/0007-*`), which is what "a Rust developer
-   calls a Clojure component" actually costs, and which no S0 benchmark
-   touches. `doc/roadmap.md` places it at the head of S1.
-3. **Get a value across the boundary from the JVM.** Symbol resolution proves
+1. **Get a value across the boundary from the JVM.** Symbol resolution proves
    reachability, not a working call. This is S1's first real unit, and it will
    force the open question `0005` now records: how `cljwit.host` locates
    `libwasmtime` without a machine-specific path.
-4. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+2. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.
@@ -43,6 +37,14 @@ ns per operation, against JVM Clojure:
 | dispatch, ten types (B2) | 3.24 | **1.99** (0.61×) | 9.22 (2.84×) |
 | dispatch, specialised (B5) | — | **0.73** | **2.39** |
 | boxed arithmetic (B3) | 2.98 | **0.93** (0.31×) | **0.91** (0.31×) |
+
+**B6 priced the component boundary** (2026-07-30): a 4 KB aggregate argument
+costs **339 ns** to lower against **35 ns** for a linear-memory language — ~10×
+— and **2544 ns** if byte payloads are held as `(array i8)` rather than
+`(array i64)`. WasmGC has no array↔memory bulk copy, so lowering is a
+per-element loop and the element width is the lever. `0008` licenses holding
+them wide. `array.copy` does the same bytes GC-to-GC in 51 ns, so an
+array↔memory instruction would be worth a further 6.6×.
 
 Generic dispatch fails the server lane by 6×; guarded specialisation erases it,
 and starts paying at 26.6% hit rate on wasmtime (nine measured points) against

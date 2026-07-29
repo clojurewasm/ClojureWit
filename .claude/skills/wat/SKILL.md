@@ -37,7 +37,8 @@ node harness.mjs f.wasm
 ## Optimize
 
 ```sh
-wasm-opt -O3 --enable-gc --enable-tail-call --enable-exception-handling f.wasm -o f.opt.wasm
+wasm-opt -O3 --enable-gc --enable-tail-call --enable-exception-handling \
+         --enable-bulk-memory --enable-bulk-memory-opt f.wasm -o f.opt.wasm
 ```
 
 Report both the unoptimized and optimized numbers. `wasm-opt` has been measured
@@ -46,9 +47,13 @@ wrong.
 
 ## Gotchas
 
-- **`wasm-opt` needs its feature flags spelled out.** Without `--enable-gc` it
-  will refuse — or worse, an older build will accept and mangle. Check
-  `wasm-opt --version` against `tools.json`.
+- **`wasm-opt` needs *every* feature spelled out, and refuses the whole module
+  if one is missing.** `--enable-gc` is the obvious one; `memory.copy` also
+  needs `--enable-bulk-memory-opt`, which is a separate flag from
+  `--enable-bulk-memory` and is easy to miss because `wasm-tools validate`
+  accepts the module happily. It fails as a build error rather than a wrong
+  number, which is the good kind. Check `wasm-opt --version` against
+  `tools.json`.
 - **Mutually recursive types must share one `(rec ...)` block**, or they are not
   the types they appear to be. The reason is *not* nominality — this line said
   the opposite until it was measured on 2026-07-29. **Type identity is the

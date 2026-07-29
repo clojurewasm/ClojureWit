@@ -91,16 +91,33 @@ That is a bounded subsystem someone reachable has already built. It is not a
 research problem. It *is* substantially more than "the Canonical ABI is written
 by hand" implied when `doc/roadmap.md` S4 was written.
 
+## Measured, 2026-07-30 (B6)
+
+The copy this note predicted qualitatively now has a price, and a lever.
+
+- **A 4 KB aggregate argument costs 339 ns to lower**, against **35 ns** for a
+  linear-memory language moving the same bytes — **~10×**.
+- **Naively it costs 2544 ns.** The difference is representation: WasmGC has no
+  array↔memory bulk copy, so lowering is a per-element loop, and holding byte
+  payloads as `(array i64)` rather than `(array i8)` moves eight bytes per
+  iteration for **7.5×** less. `0008` licenses that choice — no program can
+  observe it — so **the compiler should hold byte payloads wide.**
+- **The gap has an exact shape.** `array.copy` moves the same bytes GC-to-GC in
+  51 ns, near memcpy class. The bulk move exists and simply cannot reach linear
+  memory. **An array↔memory copy instruction would be worth a further 6.6×**,
+  and is a much smaller ask than [component-model#525].
+- Scalar-only exports still cost nothing.
+
+Numbers, controls and threats in `doc/design/0002-measure-first.md`.
+
 ## What this changes
 
 - **S4 is bigger than one line of roadmap suggested**, and it now has a
   concrete inventory: WIT type mapping, lift/lower per type, `cabi_realloc`,
   resource handle tables.
-- **S0 does not measure the thing the pitch rests on.** All four benchmarks are
-  about dispatch *inside* the module. "Rust developer calls a Clojure
-  component" is a boundary crossing, and its cost — a GC-to-linear-memory copy
-  per aggregate argument — is unmeasured. A fifth benchmark belongs in S0 or
-  early S1.
+- ~~**S0 does not measure the thing the pitch rests on.**~~ **B6 measured it**
+  (2026-07-30): ~10× a linear-memory language per aggregate argument, with a
+  7.5× representation lever inside that. See above.
 - **`cljwit.host` (S1) is unaffected in kind**: as the *caller*, it lifts and
   lowers on the JVM side, where there is no WasmGC at all. The type mapping it
   settles is the same one the compiler needs, which is the reason `0001` put it
