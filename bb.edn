@@ -127,6 +127,15 @@
                                (run "cc" "-O2" "-shared" "-fPIC" "-o" so "dev/spike/noop7.c")
                                (run "clojure" "-M:dev" "-m" "cljwit.spike.ffm-shape")))}
 
+  spike-import {:doc "Can a Wasm guest call back into Clojure? See 0014's falsifier."
+                :task (do (babashka.fs/create-dirs "target")
+                          (run "wasm-tools" "parse" "dev/resources/imp.wat" "-o" "target/imp.core.wasm")
+                          (run "wasm-tools" "component" "embed" "dev/resources/imp.wit"
+                               "target/imp.core.wasm" "-o" "target/imp.embed.wasm")
+                          (run "wasm-tools" "component" "new" "target/imp.embed.wasm"
+                               "-o" "target/imp.component.wasm")
+                          (run "clojure" "-M:dev" "-m" "cljwit.spike.host-import"))}
+
   spike-reflect {:doc "Can a component describe itself at run time? See 0014."
                  :task (do (babashka.fs/create-dirs "target")
                            (run "wasm-tools" "parse" "dev/resources/echo.wat" "-o" "target/echo.core.wasm")

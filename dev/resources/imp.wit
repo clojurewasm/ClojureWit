@@ -1,0 +1,10 @@
+// A component that *imports* a function, so the guest can call back into the
+// host. `0014` names host imports as its most-likely-to-fire falsifier: WASI
+// needs them, and they break both its in-call flag and its reused argument
+// buffer, because a call can then nest.
+package local:imp@0.1.0;
+interface host { twice: func(v: u32) -> u32; }
+world w {
+  import host;
+  export run: func(v: u32) -> u32;
+}
