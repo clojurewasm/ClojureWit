@@ -19,7 +19,10 @@ _Short by design, and printed at every session start — so findings live in
    release.
 2. **Host imports.** The mechanism works — an FFM upcall stub reaches Clojure
    from inside a component call (`bb spike-import`), pure Clojure, no C shim.
-   What is left is the `cljwit.host` API for declaring them. `0014` D and E
+   What is left is the `cljwit.host` API for declaring them. A component's
+   imports reflect exactly like its exports — interface, parameter names,
+   types — and `wasmtime_component_linker_add_wasip2` supplies all of WASI 0.2
+   in one call, so hand-writing `wasi:cli` is not the price of entry. `0014` D and E
    both **survive**: a host callback cannot re-enter the instance that is
    executing (`wasm trap: cannot enter component instance`), so the nested
    call that would clobber the argument buffer cannot happen.

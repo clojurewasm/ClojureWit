@@ -62,6 +62,22 @@ survey does **not** get a file of its own.
   in place. Say when you checked, so the next reader knows.
 - **A source worth returning to** → `refs.json`, with a one-line `why`.
 
+## A grep that finds nothing has not shown you anything
+
+Three times in one day a `grep -oE 'name_[a-z_]+'` returned nothing and the
+absence was read as a finding: `wasmtime_component_tuple_type_types_count`
+("the C API cannot express a tuple's element types"),
+`WASMTIME_COMPONENT_VALTYPE_S8` ("the enum is short"), and
+`wasmtime_component_linker_add_wasip2` ("WASI is not reachable from the
+component API"). All three exist. **`[a-z_]` does not match a digit**, and
+every one of those names has one.
+
+So: **a negative result from one grep is not evidence.** Before writing "X
+does not exist", confirm with a second instrument — read the file, widen the
+character class, or search for the surrounding prose rather than the
+identifier. This is the cheap half of the constraint already in
+`.claude/CLAUDE.md`: *ask what a negative result was incapable of showing you.*
+
 ## Two failure modes specific to surveying
 
 The general ones — no local paths, siblings' conclusions don't transfer — are
