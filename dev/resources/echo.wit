@@ -15,4 +15,13 @@ world echo {
   /// doc/design/0007 — but not a Rust toolchain, which is what the note first
   /// assumed and what this disproves.
   export echo-string: func(v: string) -> string;
+
+  /// enum lifts as a *case name* on the host side, which is why 0012 maps it
+  /// to a keyword rather than an ordinal.
+  enum colour { red, green, blue }
+  export echo-colour: func(v: colour) -> colour;
+
+  /// option's host representation is a pointer: NULL for none. That is what
+  /// makes 0012's L1 a loss on the Clojure side rather than at the boundary.
+  export echo-option-u32: func(v: option<u32>) -> option<u32>;
 }

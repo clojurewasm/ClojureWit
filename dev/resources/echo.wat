@@ -25,6 +25,17 @@
     (i32.store (i32.const 4) (local.get $len))
     (i32.const 0))
 
+  ;; enum is a discriminant and needs no memory.
+  (func (export "echo-colour") (param $v i32) (result i32) (local.get $v))
+
+  ;; option<u32> flattens to (discriminant, payload); the result is two core
+  ;; values, so it comes back through a pointer. Its area is the eight bytes
+  ;; at 8, kept clear of echo-string's at 0.
+  (func (export "echo-option-u32") (param $disc i32) (param $val i32) (result i32)
+    (i32.store (i32.const 8) (local.get $disc))
+    (i32.store (i32.const 12) (local.get $val))
+    (i32.const 8))
+
   (func (export "echo-bool") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-s32") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-u64") (param $v i64) (result i64) (local.get $v))

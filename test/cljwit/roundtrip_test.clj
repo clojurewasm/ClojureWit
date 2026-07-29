@@ -38,7 +38,8 @@
 ;; inferred: wasmtime_component_val_t is 32 bytes, kind:u8 at 0, union at 8.
 (def ^:private VAL 32)
 (def ^:private UNION 8)
-(def ^:private KIND {:bool 0 :s32 5 :u64 8 :f32 9 :f64 10 :char 11 :string 12})
+(def ^:private KIND {:bool 0 :u32 6 :u64 8 :s32 5 :f32 9 :f64 10 :char 11
+                     :string 12 :enum 17 :option-u32 18})
 
 ;; wasm_name_t is {size_t size; char *data;} — 16 bytes, size at 0, data at 8 —
 ;; measured against the pinned headers, and it sits at the union offset.
@@ -142,6 +143,25 @@
           :u64  (.set args I64 (long UNION) (long v))
           :f32  (.set args F32 (long UNION) (float v))
           :f64  (.set args F64 (long UNION) (double v))
+          ;; enum's host representation is the *case name*, not an ordinal —
+          ;; which is why 0012 maps it to a keyword.
+          :enum (let [b   (.getBytes ^String (name v) "UTF-8")
+                      buf ^MemorySegment (.allocate arena (long (alength b)))]
+                  (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
+                  (.set args I64 (long (+ UNION STR-SIZE)) (long (alength b)))
+                  (.set args ADDR (long (+ UNION STR-DATA)) buf))
+          ;; option is a pointer: NULL is none, otherwise it points at a val.
+          :option-u32 (.set args ADDR (long UNION)
+                            (if (nil? v)
+                              MemorySegment/NULL
+                              (let [inner ^MemorySegment (.allocate arena (long VAL))]
+                                (.set inner I8 (long 0) (byte (KIND :u32)))
+                                ;; unchecked-int, not int: the slot is 32 bits
+                                ;; and a valid u32 above 2^31-1 does not fit a
+                                ;; Java int, so the checked cast throws on a
+                                ;; value the ABI accepts.
+                                (.set inner I32 (long UNION) (unchecked-int v))
+                                inner)))
           :string (let [b   (.getBytes ^String v "UTF-8")
                         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
@@ -156,6 +176,17 @@
           :u64  (.get res I64 (long UNION))
           :f32  (.get res F32 (long UNION))
           :f64  (.get res F64 (long UNION))
+          :enum (let [n (.get res I64 (long (+ UNION STR-SIZE)))
+                      p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
+                      b (byte-array n)]
+                  (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
+                  (keyword (String. b "UTF-8")))
+          :option-u32 (let [p ^MemorySegment (.get res ADDR (long UNION))]
+                        (when-not (.equals MemorySegment/NULL p)
+                          ;; and widen unsigned on the way back, or 2^32-1 lifts
+                          ;; as -1.
+                          (bit-and (long (.get (.reinterpret p VAL) I32 (long UNION)))
+                                   0xFFFFFFFF)))
           :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
                         p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
                         b (byte-array n)]
@@ -237,6 +268,27 @@
         (let [lone (str (char 0xD800))]
           (is (not= lone (echo "echo-string" :string lone))
               "an unpaired surrogate does not survive the boundary"))))))
+
+(deftest enums-and-options-round-trip
+  (with-echo
+    (fn [echo]
+      (testing "enum lifts as a case name, so a keyword is the natural mapping"
+        (doseq [c [:red :green :blue]]
+          (is (= c (echo "echo-colour" :enum c)) (str "colour " c))))
+
+      (testing "option<u32> — a value or nil, per 0012"
+        (doseq [v [0 1 42 4294967295]]
+          (is (= v (echo "echo-option-u32" :option-u32 v)) (str "some " v)))
+        (is (nil? (echo "echo-option-u32" :option-u32 nil)) "none is nil"))
+
+      (testing "L1's premise — the boundary keeps a distinction Clojure loses"
+        ;; `none` is a NULL pointer and `some(v)` points at a val, so the two
+        ;; are distinct on the wire. 0012's L1 is a loss in *our* mapping, not
+        ;; in the ABI: nesting is what collapses, because nil is the only thing
+        ;; `none` can become. This asserts the half that is checkable here.
+        (is (not= (echo "echo-option-u32" :option-u32 nil)
+                  (echo "echo-option-u32" :option-u32 0))
+            "none and some(0) stay distinct across the boundary")))))
 
 (deftest char-boundaries
   (with-echo

@@ -31,7 +31,7 @@ in WASI 0.2, 🔀 in WASI 0.3, and 🗺️ 🔧 📝 are **in no shipped release
 | WIT | gate | Clojure | |
 |---|---|---|---|
 | `bool` | | `true` / `false` | |
-| `s8 s16 s32 s64 u8 u16 u32` | | integer | all fit a `long` |
+| `s8 s16 s32 s64 u8 u16 u32` | | integer | all fit a `long` — but see the lowering note |
 | `u64` | | integer or `BigInt` | L2 |
 | `f32` `f64` | | double | L3, L4 |
 | `char` | | `Integer` code point | L5 |
@@ -179,6 +179,12 @@ where the oracle exists.
   (`Explainer.md:1383-1385`) the *compiler* will have to choose; for the host
   wasmtime does.
 - **L7 — `map`.** Duplicate keys and ordering, above.
+- **Not lossy, but a lowering constraint the table missed.** The unsigned types
+  fit a `long` when lifted, and that is what the row says — but the *slot* is as
+  wide as the WIT type, and Clojure's `int` cast is checked. Lowering a
+  perfectly valid `u32` of 2^32−1 throws `integer overflow` unless the write is
+  `unchecked-int`, and lifting one gives −1 unless it is widened. Found by the
+  round-trip test failing on `4294967295`.
 - **L8 — integer range on lowering is undecided.** `CanonicalABI.md:3435`:
   "component-level values are assumed in-range" — the ABI does not check, so
   the host must, and whether lowering `300` into a `u8` throws or wraps is not
