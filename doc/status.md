@@ -11,7 +11,10 @@ _Short by design, and printed at every session start — so findings live in
 (`0011`): `MethodHandleProxies/asInterfaceInstance` behind a `definterface`
 gives a static call site at **7.7 ns** against `invokeWithArguments`' 396, so
 **`cljwit.host` can be pure Clojure** — no bytecode generation, no C shim. But
-a scalar component call costs **~2.9 µs**, so that boxing is only ~14% of it.
+a scalar component call costs **microseconds** — the exact figure is not
+established, because a decomposition attempt found the `invokeWithArguments`
+measurement swings ~1.8× run to run and one arm is reproducibly implausible
+(`0011`). The proxy, by contrast, measures 7.3 ns every time.
 The C API offers only the dynamic call path; there is no typed equivalent of
 the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
 payloads under ~30 KB the call dominates the copy.**
@@ -28,11 +31,11 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Decide whether ~2.5 µs per component call is acceptable for what
-   `cljwit.host` is for** — and if not, which lever. A typed path does not
-   exist in the C API; the alternatives are a Rust shim exposing one, or an API
-   that batches. This is a product question as much as a technical one and it
-   should be settled before the API hardens.
+1. **Measure the call cost properly**, then decide whether it is acceptable.
+   The spike measures every path in one JVM through `invokeWithArguments` —
+   the slowest and least stable mechanism — so it contaminates its own numbers
+   (`0011`). Bind through proxies, check every error return, run each path in a
+   fresh JVM. Nothing about the cost should be quoted until then.
 2. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).

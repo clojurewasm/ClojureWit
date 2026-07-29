@@ -17,6 +17,11 @@
                            fast path.
      component call        a real scalar call across a component boundary, for
                            scale. The others only matter relative to this.
+     core module, 2 ways   the same add(i32,i32) as a plain core module, called
+                           dynamically and raw. Same host, same library, same
+                           machine — so the component figure can be split into
+                           binding cost, dynamic-calling cost, and what the
+                           Component Model itself adds.
 
    `abs` stands in for a trivial native callee: one int in, one int out, no
    allocation, so what is measured is the call mechanism rather than the work.
@@ -111,8 +116,66 @@
                        (.set args I8 base (byte KIND-S32))
                        (.set args I32 (+ base VAL-UNION-OFFSET) (int v))))
 
+            ;; The same add as a bare core module, so the component number has
+            ;; something to be measured against.
+            core-bytes (.readAllBytes (io/input-stream (io/file "dev/resources/add.core.wasm")))
+            cbuf   (.allocate arena (long (count core-bytes)))
+            _      (MemorySegment/copy ^bytes core-bytes 0 ^MemorySegment cbuf I8 0 (int (count core-bytes)))
+            mout   (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
+            _      (call (fx "wasmtime_module_new" ADDR ADDR ADDR I64 ADDR)
+                         engine cbuf (long (count core-bytes)) mout)
+            module (.get ^MemorySegment mout ADDR (long 0))
+            cinst  (.allocate arena (long 16))
+            trap   (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
+            _      (call (fx "wasmtime_instance_new" ADDR ADDR ADDR ADDR I64 ADDR ADDR)
+                         ctx module MemorySegment/NULL (long 0) cinst trap)
+            cnm    (let [b (.getBytes "add" "UTF-8")
+                         sg ^MemorySegment (.allocate arena (long (inc (alength b))))]
+                     (MemorySegment/copy ^bytes b 0 sg I8 0 (alength b))
+                     (.set sg I8 (long (alength b)) (byte 0))
+                     sg)
+            extrn  ^MemorySegment (.allocate arena (long 32))
+            _      (call (fx "wasmtime_instance_export_get" ValueLayout/JAVA_BOOLEAN ADDR ADDR ADDR I64 ADDR)
+                         ctx cinst cnm (long 3) extrn)
+            ;; wasmtime_extern_t is {kind:u8, of:union} with the union at 8, and
+            ;; a func is the first union member — so the wasmtime_func_t sits at
+            ;; offset 8 and is 16 bytes.
+            cfunc  ^MemorySegment (.asSlice extrn (long 8) (long 16))
+            cargs  ^MemorySegment (.allocate arena (long 64))
+            cres   ^MemorySegment (.allocate arena (long 32))
+            _      (doseq [[i v] (map-indexed vector [17 25])]
+                     (let [base (long (* i 32))]
+                       (.set cargs I8 base (byte 0))          ; WASMTIME_I32
+                       (.set cargs I32 (+ base 8) (int v))))
+            ccall  ^MethodHandle (fx "wasmtime_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64 ADDR)
+            ;; val_raw is a bare 16-byte union: args and results share one array.
+            raw    ^MemorySegment (.allocate arena (long 32))
+            _      (do (.set raw I32 (long 0) (int 17)) (.set raw I32 (long 16) (int 25)))
+            rcall  ^MethodHandle (fx "wasmtime_func_call_unchecked" ADDR ADDR ADDR ADDR I64 ADDR)
+
             n 2000000
-            r {"invokeWithArguments (trivial native call)"
+            r {"core module, call_unchecked (raw)"
+               (timed (fn [^long k]
+                        (loop [i 0 acc 0]
+                          (if (< i k)
+                            (do (.set raw I32 (long 0) (int 17))
+                                (.set raw I32 (long 16) (int 25))
+                                (.invokeWithArguments rcall ^java.util.List [ctx cfunc raw (long 2) trap])
+                                (recur (inc i) (unchecked-add acc (long (.get raw I32 (long 0))))))
+                            acc)))
+                      (quot n 10) 21 5)
+
+               "core module, func_call (dynamic Val)"
+               (timed (fn [^long k]
+                        (loop [i 0 acc 0]
+                          (if (< i k)
+                            (do (.invokeWithArguments ccall ^java.util.List
+                                                      [ctx cfunc cargs (long 2) cres (long 1) trap])
+                                (recur (inc i) (unchecked-add acc (long (.get cres I32 (long 8))))))
+                            acc)))
+                      (quot n 10) 21 5)
+
+               "invokeWithArguments (trivial native call)"
                (timed (fn [^long k]
                         (loop [i 0 acc 0]
                           (if (< i k)

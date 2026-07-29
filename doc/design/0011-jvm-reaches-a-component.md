@@ -95,8 +95,9 @@ is what it looked like before anyone measured. `cljwit.host` can be pure
 Clojure.
 
 **2. But that is not where the time goes.** A scalar component call costs
-**~2.5–2.9 µs** — the prediction said 200–1000 ns — so the 396 ns of boxing is
-around **14%** of it. Removing the boxing entirely buys a sixth. The dominant cost is
+**microseconds** — the prediction said 200–1000 ns — so the boxing is a modest
+fraction of it. The exact fraction is not established: see the decomposition
+below, which found the measurement unstable. Removing the boxing entirely buys a sixth. The dominant cost is
 wasmtime's component call itself.
 
 **3. And that cost is structural, not a mistake in the spike.** Omitting
@@ -114,11 +115,63 @@ dominates the copy** — so the boundary's cost is mostly *per call*, not per
 byte, and an API that encourages many small calls will hurt far more than one
 that moves large values.
 
-**What this leaves open.** Whether ~2.5 µs is acceptable depends on what
-`cljwit.host` is for, and nothing here says. If it is not, the levers are a
-typed path that does not exist in the C API, a Rust shim exposing one, or
-batching at the API level — in that order of appeal and inverse order of
-effort.
+**Where the 2.5 µs lives — prediction recorded 2026-07-30, before the run.**
+"Is 2.5 µs acceptable" reads as a product question, but it decomposes into an
+engineering one: the same C API can call a **core module** three ways, so the
+component figure can be split against them without changing host, library or
+machine.
+
+| | what it isolates |
+|---|---|
+| core `wasmtime_func_call_unchecked` | the raw call — no `Val` marshalling |
+| core `wasmtime_func_call` | + wasmtime's dynamic `Val` convention |
+| component `wasmtime_component_func_call` | + the Component Model's canonical ABI |
+
+Predicted: unchecked **~50–100 ns**, core dynamic **~300–600 ns**, so the
+Component Model itself accounts for **~2.3 µs of the 2.9** and the lever is
+neither our binding nor dynamic calling. **Falsified if core dynamic is itself
+~2.5 µs**, in which case the cost is wasmtime's `Val` convention and a typed
+path — which the component API lacks but the core API has — would be the whole
+answer.
+
+### The decomposition ran and is not trustworthy. Recorded rather than quoted.
+
+Three runs, same command, same machine, minutes apart:
+
+| ns/call | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| core `call_unchecked` | 4858 | 8760 | 5280 |
+| core `func_call` | 1990 | 3562 | 2141 |
+| `invokeWithArguments`, trivial | 398 | 768 | 421 |
+| **interface proxy, trivial** | **19.4** | **7.3** | **7.3** |
+| component call | 2841 | 4874 | 3046 |
+
+**Two things are wrong with it and one thing is solid.**
+
+*Wrong:* `call_unchecked` — wasmtime's raw, no-marshalling path — comes in
+**2.4× slower than the checked one, reproducibly in all three runs**. A fast
+path cannot be slower than the path it optimises, so the spike is using it
+incorrectly even though it returns the right answer. Until that is explained
+the arm is meaningless, and with it the decomposition.
+
+*Also wrong:* everything routed through `invokeWithArguments` swings **~1.8×
+run to run** — 398/768/421 on the trivial call, and the wasm calls move with
+it. A number that cannot be reproduced is worse than no number, so **the
+prediction above is neither confirmed nor falsified**, and the 2.9 µs figure in
+the table further up should be read as "microseconds, order of magnitude" and
+not as 2.9.
+
+*Solid:* **the interface proxy is 7.3 ns in two runs out of three and never
+moves with the rest.** So the case for it is stronger than speed alone — the
+reflective path is not just ~50× slower, it is *unpredictable*, which is what
+per-call allocation looks like. That is the one conclusion this run supports.
+
+**The methodological fault is the spike's own.** It measures every path in one
+JVM, through the mechanism that is both the slowest and the least stable, so it
+contaminates its own numbers. Doing it properly means binding through proxies
+rather than `invokeWithArguments`, checking the error return on every call, and
+running each path in a fresh JVM. That is the next unit, and until it is done
+**no cost decomposition from this spike should be quoted.**
 
 ## Why this shape
 

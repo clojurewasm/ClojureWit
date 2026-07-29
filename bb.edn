@@ -102,6 +102,8 @@
                           (do (println "CLJWIT_WASMTIME_LIB is unset — run inside `nix develop`")
                               (System/exit 1))
                           (do (run "bb" "run" "spike-host")
+                              (run "wasm-tools" "parse" "dev/resources/add.wat"
+                                   "-o" "dev/resources/add.core.wasm")
                               (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
                                    "-M:dev" "-m" "cljwit.spike.call-overhead")))}
 
