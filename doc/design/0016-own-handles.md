@@ -1,8 +1,7 @@
 # 0016 — `own<T>` handles, in both directions
 
-**Status:** accepted for A, B and D, which are implemented and tested.
-**C is open** — lowering an `own` is rejected by wasmtime with `mismatched
-resource types` and nobody knows why yet; see the end. · 2026-07-30 · rewritten after an adversarial review built
+**Status:** accepted · 2026-07-30 · A, B, C and D are implemented and tested
+against a guest that really implements a resource · rewritten after an adversarial review built
 the guest this note said it was missing. The file was `0016-resource-handles.md`
 until that review showed `borrow` is not a question this note can ask.
 
@@ -150,32 +149,29 @@ instead of it."
   the result val. Measured true today, and the failure is a silent resource
   leak, so it needs re-checking on upgrade.
 
-## C does not work, and the reason is not yet known
+## What C cost, and what the error was really about
 
-Implemented and measured 2026-07-30. A handle that came from *this instance's
-own* `[constructor]counter`, and that works as a `borrow` across repeated
-`bump` calls, is refused when lowered into an `own` parameter:
+Lowering an `own` failed for a while with
 
 ```
 call local:res/bag@0.1.0#consume: mismatched resource types
 ```
 
-What has been ruled out: **the clone is not the cause** — skipping it entirely
-gives the identical message. What has not been separated is whether the fault
-is in the guest's `[resource-new]` / `[resource-rep]` / `[resource-drop]`
-imports resolving to a different resource type than the one in the exported
-interface, or in what the host writes into the val. A C control that does the
-same round trip would separate them, exactly as it did for `0013`.
+for a handle that came from *this instance's own* constructor and worked fine
+as a `borrow`. The prediction recorded before looking was that the guest was at
+fault — the host writes identical bytes for `own` and `borrow`, so it seemed to
+have no way to differ. **That was wrong**, and reading the built component
+showed why: `consume` takes `(own 8)` and `[constructor]counter` returns
+`(own 8)`, the same exported type. The component was correct.
 
-The test asserts the failure and its message, so the day this changes a test
-says so rather than a comment going stale. Everything else in this note is
-implemented: lifting an `own`, lowering into a `borrow`, `close` as
-`try { drop } finally { delete }`, and the instance closing what it still
-holds.
+The fault was `transfer!` calling `resource_any_delete` **during lowering**.
+`func_call` reads the pointer the argument val holds, so the host freed it
+before wasmtime read it, and wasmtime reported a type mismatch — an error about
+the wrong thing entirely. Deleting after the call fixes it; `0016` C now says
+so explicitly, because "delete, never drop" was true and still not enough.
 
-**A side effect worth having**: chasing this added wasmtime's own error text to
-every `ok!`. `call … failed` became `call …: mismatched resource types`, which
-is what turned this from a guess into a bounded question.
+**The error text is what made this a bounded question.** Before `ok!` read
+wasmtime's message, this was `call … failed`.
 
 ## Notes for whoever writes the guest
 

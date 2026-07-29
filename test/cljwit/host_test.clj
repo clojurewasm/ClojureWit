@@ -309,18 +309,14 @@
                     (is (= 102 (bump (second cs) 1)))
                     (run! (fn [^java.lang.AutoCloseable c] (.close c)) cs)))
 
-                ;; Last: the trap this provokes poisons the instance, and every
-                ;; later call then fails with "cannot enter component instance"
-                ;; (the note in res.wat).
-                (testing "0016 C — lowering an own does not work yet"
-                  ;; wasmtime answers "mismatched resource types" for a handle
-                  ;; that came from this instance's own constructor and works
-                  ;; fine as a borrow. Whether the fault is the guest's
-                  ;; [resource-*] imports or what the host writes into the val
-                  ;; is unresolved. Asserted so the day it changes a test says
-                  ;; so, rather than a comment going stale.
-                  (let [e (is (thrown? clojure.lang.ExceptionInfo (consume (make 7))))]
-                    (is (re-find #"mismatched resource types" (ex-message e)))))))))
+                (testing "0016 C — lowering an own transfers, and with-open still exits cleanly"
+                  (is (= 7 (with-open [^java.lang.AutoCloseable c (make 7)]
+                             (consume c)))
+                      "close after a transfer must not throw over the body's value")
+                  (let [^java.lang.AutoCloseable c (make 3)]
+                    (is (= 3 (consume c)))
+                    (is (thrown? clojure.lang.ExceptionInfo (bump c 1))
+                        "the handle is stale the moment ownership moves")))))))
         (finally (.delete ^File c))))))
 
 (deftest an-instance-closes-handles-it-still-holds

@@ -255,7 +255,7 @@
 
 (def ^:private RESOURCE 21)   ; wasmtime_component_val_t's kind for a handle
 
-(deftype Handle [^MemorySegment ptr ^MemorySegment ctx api registry
+(deftype Handle [^MemorySegment ptr ^MemorySegment ctx api registry pending
                  ^AtomicBoolean closed]
   java.lang.AutoCloseable
   (close [this]
@@ -274,11 +274,16 @@
 (defn- transfer!
   "0016 C: lowering an `own` gives the resource to the guest. The host's handle
    is stale immediately — dropping it afterwards is `unknown handle index` —
-   so it is deleted, never dropped."
+   so it is deleted, never dropped.
+
+   **Deleted after the call, not during lowering.** `func_call` reads the
+   pointer the argument val holds, so freeing it while lowering hands wasmtime
+   a dangling `resource_any_t *` — which surfaces as `mismatched resource
+   types`, an error about the wrong thing entirely."
   [^Handle h]
   (when (.compareAndSet ^AtomicBoolean (.-closed h) false true)
     (swap! (.-registry h) disj h)
-    (invoke (:res-delete (.-api h)) (.-ptr h))))
+    (swap! (.-pending h) conj (.-ptr h))))
 
 (defn- live-ptr [^Handle h what]
   (when (.get ^AtomicBoolean (.-closed h))
@@ -447,7 +452,8 @@
       (fn [^MemorySegment seg]
         (let [p ^MemorySegment (.get seg ADDR (long UNION))
               c ^MemorySegment (invoke (:res-clone (:api rt)) p)
-              h (->Handle c (:ctx rt) (:api rt) (:registry rt) (AtomicBoolean. false))]
+              h (->Handle c (:ctx rt) (:api rt) (:registry rt) (:pending rt)
+                          (AtomicBoolean. false))]
           (swap! (:registry rt) conj h)
           h))
       (scalar-lift tree))
@@ -689,7 +695,12 @@
           ;; grow RSS by less than the same number of scalar calls do.
           (let [out (when rlift (rlift res))]
             out))
-        (finally (.set in-call false))))))
+        (finally
+          (let [ps @(:pending rt)]
+            (when (seq ps)
+              (reset! (:pending rt) [])
+              (run! (fn [p] (invoke (:res-delete api) p)) ps)))
+          (.set in-call false))))))
 
 (defn instantiate
   "Instantiates a compiled component. Cheap — tens of microseconds — so a
@@ -713,7 +724,11 @@
         ;; the instance keeps the list and closes what is left before deleting
         ;; the store a handle's context points into.
         registry (atom #{})
-        rt      {:ctx ctx :api api :registry registry}
+        ;; Handles transferred by a call, deleted once the call has read them.
+        ;; One atom per instance is enough because 0014 D forbids concurrent
+        ;; calls into a store.
+        pending  (atom [])
+        rt      {:ctx ctx :api api :registry registry :pending pending}
         item-kind (fn [^MemorySegment it] (bit-and (long (.get it I8 (long 0))) 0xFF))
         ;; Every export, flattened. A function inside an interface is keyed the
         ;; way WIT spells it — "pkg:name/iface@ver#func" — and remembers the
