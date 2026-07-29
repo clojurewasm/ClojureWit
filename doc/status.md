@@ -12,16 +12,22 @@ Repository, toolchain, gate, and CI are in place and verified end to end
 tools — wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0). **CI is green on a
 fresh Linux runner in 50s.**
 
-**S0: B1 and B2 measured; the design passes on one lane of two.** Under the
-stop condition as rewritten on 2026-07-29 — dispatch overhead under 1 ns,
-absolute, per lane — **V8 passes at 0.13 ns and wasmtime fails at 6.08.** The
-shape is not refuted; its one remaining lever is now load-bearing rather than
-optional, and B5 decides. Headline numbers, ns per dispatch:
+**S0: B1, B2 and B5 measured. Both lanes pass the stop condition — on a
+condition.** Generic vtable dispatch fails the server lane by 6×. Guarded
+call-site specialisation erases it: **0.06 ns over a direct call on wasmtime,
+0.00 on V8**. But at a 2-in-11 hit rate wasmtime costs 12.4 ns against generic
+dispatch's 9.2, so **specialising a site the analysis is wrong about is worse
+than leaving it alone.** The design is viable exactly to the extent that
+whole-program analysis can tell those cases apart.
+
+ns per dispatch:
 
 | | JVM Clojure | V8 (node) | wasmtime |
 |---|---|---|---|
-| B1 monomorphic | 1.50 | **0.87** (0.58×) | **8.43** (5.61×) |
-| B2 ten types | 3.24 | **1.99** (0.61×) | **9.22** (2.84×) |
+| B1 monomorphic, generic | 1.50 | **0.87** (0.58×) | **8.43** (5.61×) |
+| B2 ten types, generic | 3.24 | **1.99** (0.61×) | **9.22** (2.84×) |
+| B5 specialised, hits | — | **0.73** | **2.39** |
+| B5x specialised, mostly misses | — | 1.88 | **12.37** |
 
 **V8 beats JVM Clojure outright** and its dispatch is free — speculative
 inlining reaches us, as `doc/design/0003-*` hoped. **wasmtime pays 6.1 ns**, and
@@ -98,8 +104,9 @@ and `.claude/skills/wat` asserted the opposite until it was measured.
 |---|---|---|
 | ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — V8 passes, wasmtime fails |
 | ~~B2~~ | ~~the same site with 10 receiver types~~ | **done** — mechanism confirmed, V8 0.61× JVM, wasmtime 2.84× |
+| ~~B5~~ | ~~guarded call-site specialisation~~ | **done** — both lanes pass, on a coverage condition |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
-| B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph |
+| B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph — B2 questions the axis |
 
 **B2 confirmed `0004`'s mechanism and not its conclusion.** Megamorphism costs
 wasmtime +9% against JVM Clojure's +114% — a vtable slot really has no cache to
@@ -108,14 +115,14 @@ unchanged. The surprise is V8: it degrades +122%, like the JVM, because winning
 B1 by speculating means having speculation to lose. Details in
 `doc/design/0002-*`.
 
-**B5 is next**, and B2 gave it a second reason to exist: at a megamorphic site
-there is no direct-call floor to measure against, because a direct call is
-monomorphic in target by definition. The reachable floor there is a guarded
-specialised call.
+**Next is the specialisation crossover**, which B5 turned into the number the
+design rests on: a specialised site is free when the analysis is right and
+*worse than doing nothing* when it is mostly wrong, and the hit rate where those
+cross is unmeasured. B5 and B5x walk different rings, so they cannot be
+interpolated — this needs rings of varying type mix.
 
-- **B5 — call-site specialisation on wasmtime.** S0 cannot conclude without
-  it: it is the only lever B1 found, the stop condition is written against it,
-  and it is the only floor a megamorphic site has.
+- **B7 — the crossover.** What a compiler needs in order to decide whether to
+  specialise a site at all.
 - **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
   aggregate argument, unmeasured, and it is what "a Rust developer calls a
   Clojure component" actually costs. Before S1 fixes the type mapping.

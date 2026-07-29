@@ -61,6 +61,17 @@
    {:id "B2c"
     :what "control: the one-type ring and the same callee, called directly"
     :wat "bench/s0/b2_megamorphic.wat" :export "bench_direct"
+    :expect #(mod % 11)}
+   ;; B5 — the lever B1 identified. Compare against B2m (generic dispatch, same
+   ;; ring) and B2c (the direct-call floor, same ring and callee); the miss
+   ;; variant against B2 (generic dispatch, mixed ring).
+   {:id "B5"
+    :what "guarded specialisation, every step hits — what the lever buys"
+    :wat "bench/s0/b2_megamorphic.wat" :export "bench_guarded_hit"
+    :expect #(mod % 11)}
+   {:id "B5x"
+    :what "guarded specialisation, 2 of 11 steps hit — what it costs when wrong"
+    :wat "bench/s0/b2_megamorphic.wat" :export "bench_guarded_miss"
     :expect #(mod % 11)}])
 
 ;; --- shelling out ----------------------------------------------------------

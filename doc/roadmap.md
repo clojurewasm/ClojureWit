@@ -46,17 +46,20 @@ gamed by slowing the baseline. The unoptimised build is the reference, because
 `wasm-opt -O3` halves the control on one lane and not the other, which
 `doc/design/0002-*` records as a threat to validity.
 
-| | B1 | B1c | overhead |
-|---|---|---|---|
-| V8 | 0.87 | 0.74 | **0.13 ns — passes** |
-| wasmtime | 8.43 | 2.35 | **6.08 ns — fails today** |
+| | overhead, generic | overhead, specialised |
+|---|---|---|
+| V8 | 0.13 ns — passes | **0.00 ns** |
+| wasmtime | 6.08 ns — fails | **0.06 ns — passes** |
 
-B1 identified the only lever that moves the server lane: making the target
-statically known. **S0 does not conclude until B5 measures whether it works** —
-and B5 must measure a *guarded* specialised site (`br_on_cast` plus a direct
-call, including the miss path) weighted by the specialisation coverage
-`doc/design/0004-*` says the compiler will report. An unguarded specialised
-site is B1c by construction and would measure nothing.
+**B5 has run and both lanes pass — conditionally.** A guarded specialised site
+lands on the direct-call floor on both engines. But at a 2-in-11 hit rate
+wasmtime costs 12.4 ns against generic dispatch's 9.2, so **specialising a site
+the analysis is wrong about is worse than leaving it alone.**
+
+So S0's answer is: **the design is viable to exactly the extent that
+whole-program analysis can tell those two cases apart.** That moves the coverage
+report in `doc/design/0004-*` from a nicety to the thing the stage rests on, and
+it makes the crossover hit-rate — unmeasured — the next number that matters.
 
 ### S1 — `cljwit.host`: call Wasm from JVM Clojure (weeks)
 
@@ -119,12 +122,16 @@ guessing.
   worse where the JVM can use primitives. See `doc/design/0004-*`.
 - **Not a claim of a single performance multiplier.** The engine ranking
   inverts with the workload — V8 is 9.8× faster than wasmtime on B1's dispatch
-  and ~5× slower on compute-bound linear-memory code. Any one number quoted
+  and 3.3× slower on compute-bound linear-memory code. Any one number quoted
   about this project is wrong in one of the two directions
   (`doc/design/0003-*`).
 
 ## Open questions we know we have
 
+- **Where is the specialisation crossover?** B5 shows a specialised site is
+  free when the analysis is right and *worse than doing nothing* when it is
+  mostly wrong. The hit rate where those cross is unmeasured, and it is what a
+  compiler needs in order to decide. Next.
 - **What does a boundary crossing cost?** Every S0 benchmark measures dispatch
   *inside* the module. "A Rust developer calls a Clojure component" is a
   GC-to-linear-memory copy per aggregate argument, and it is unmeasured. This

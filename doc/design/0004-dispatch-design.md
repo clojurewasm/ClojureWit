@@ -1,6 +1,6 @@
 # 0004 — Dispatch design (hypothesis, tested by S0)
 
-**Status:** proposed — **B1 and B2 measured, B3–B5 outstanding**. · 2026-07-29
+**Status:** proposed — **B1, B2 and B5 measured; B3, B4 outstanding**. · 2026-07-29
 
 > **Amendment, 2026-07-29 (B1).** The prediction "protocol dispatch within 2× of
 > JVM" failed on wasmtime: **5.61×** (it held on V8, at 0.58×). The cost is not
@@ -106,6 +106,13 @@ new vocabulary is needed.
   general: arity mismatches can occur at runtime. So a call site is only
   specialized when both the target set is finite *and* every candidate's arity
   matches. Otherwise it stays generic — and the coverage report says so.
+
+  **B5 promoted this from a caveat to the load-bearing part.** A guarded
+  specialised site costs 0.06 ns over a direct call on wasmtime, erasing the
+  6.16 ns generic dispatch pays; at a 2-in-11 hit rate it costs 12.4 ns against
+  generic dispatch's 9.2. Specialising wrongly is worse than not specialising,
+  so the analysis's *precision* — not just its coverage — is what the server
+  lane rests on, and the coverage report is a requirement rather than a nicety.
 - **Whole-program analysis is expensive.** Start at 0-CFA; give the analysis a
   budget, and when it is exceeded, lower the specialization level rather than
   running longer. Failing conservative is always sound.

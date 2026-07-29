@@ -29,6 +29,10 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
   gained the reference sources it needs.
 - **`doc/design/0007`** — the component boundary is linear memory, not GC.
   Found by the first survey; sizes S4 and adds an open question to the roadmap.
+- **S0 B5** — guarded call-site specialisation, the lever B1 identified. It
+  erases the server lane's 6.16 ns of dispatch overhead down to 0.06, so both
+  lanes pass the stop condition — but a mostly-missing guard costs more than no
+  guard at all, which makes analysis precision the thing S0's answer rests on.
 - **S0 B2** — the same dispatch with ten receiver types, plus a depth-matched
   one-type control so receiver count is the only variable. Confirms `0004`'s
   mechanism (wasmtime +9% under megamorphism against JVM Clojure's +114%) and

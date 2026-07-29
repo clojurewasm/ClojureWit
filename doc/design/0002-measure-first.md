@@ -38,6 +38,7 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B2 | protocol dispatch, 10 receiver types at one site | **faster than JVM** — the JVM's per-call-site cache thrashes; a vtable slot has no cache to thrash | **half right, and the mechanism is right.** V8 **0.61×** — faster than JVM, prediction holds; wasmtime **2.84×** — slower, prediction fails. But megamorphism costs wasmtime **+9%** against the JVM's **+114%**, so "no cache to thrash" is confirmed. V8 degrades **+122%**, because it *does* speculate and loses it. |
 | B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | _pending_ |
 | B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | _pending_ — but B2 raised a question about the axis: see below |
+| B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor — 0.06 ns, far better than the 1 ns predicted. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -163,6 +164,43 @@ against 0.748 on V8), which is the check that the controls are now built alike.
    specialised call — which is B5, and this is a second reason S0 cannot
    conclude without it.
 
+## B5 — measured 2026-07-29. The server lane passes, on a cliff.
+
+Same module as B2, so the type graph and both rings are provably identical to
+the baselines. A guarded site tests the receiver against the expected type,
+calls directly on a hit, and falls through to the unchanged vtable path on a
+miss — the fallback has to be there or this measures an unsound transformation.
+
+ns per dispatch, wasmtime | V8:
+
+| | generic | **guarded** | direct-call floor |
+|---|---|---|---|
+| one receiver type (mono ring) | 8.489 \| 0.894 | **2.390 \| 0.733** | 2.331 \| 0.739 |
+| ten receiver types, 2/11 hit | 9.216 \| 1.987 | **12.368 \| 1.879** | — |
+
+**1. The lever works, and it is the whole game.** On a site the analysis gets
+right, guarded specialisation costs **0.06 ns over a direct call on wasmtime**
+and **nothing on V8** — it lands on the floor on both lanes. The 6.16 ns of
+dispatch overhead B1 found is gone, and the `br_on_cast` guard that replaces it
+is free at this hit rate. **Both lanes now pass the S0 stop condition**, which
+generic dispatch failed on the server by 6×.
+
+**2. It is a cliff, not a slope.** At a 2-in-11 hit rate wasmtime is 12.37 —
+**worse than not specialising at all** (9.22), because the guard is paid and the
+vtable path taken anyway. Specialising a site the analysis is wrong about is
+more expensive than leaving it generic.
+
+**3. So S0's answer is conditional on coverage, and `0004`'s coverage report
+stops being a nicety.** The design is viable exactly to the extent that
+whole-program analysis can tell the two cases apart. Where the crossover sits —
+the hit rate at which specialisation stops paying — is **not measured**: the two
+rows above walk different rings, so they cannot be interpolated. That needs
+rings of varying type mix and is the next thing to measure.
+
+**4. V8 gains a little too**, which the prediction denied: 0.894 → 0.733, and
+its residual 0.155 ns of dispatch overhead disappears. V8 speculates the generic
+shape well but not perfectly, and a static guard beats it.
+
 **Threats to validity, recorded so the number is not over-read.**
 
 - The benchmark is a **dependency chain** — each dispatch's result is the next
@@ -190,3 +228,9 @@ against 0.748 on V8), which is the check that the controls are now built alike.
   n = 5/10/15/20/40 M with an intercept of ~2.5 ms.
 - **One machine, arm64.** CI runs `bb check` only, so no number in this repo
   has been produced on x86_64 Linux.
+- **B5's guard tests one type.** A real specialised site with several candidates
+  needs several guards or a switch, and nothing here says what the second and
+  third cost. The 0.06 ns result is the best case by construction.
+- **B5's fallback is the generic path, not a slow path that re-specialises.**
+  A compiler that re-profiles would behave differently, and this project does
+  not have one (`0003`: we do not write a JIT).

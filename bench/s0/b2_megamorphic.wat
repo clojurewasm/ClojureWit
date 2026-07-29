@@ -334,6 +334,49 @@
         (br $l)))
     (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
 
+
+  ;; --- B5: guarded call-site specialisation -------------------------------
+  ;;
+  ;; The only lever B1 found for the server lane. A specialised site tests the
+  ;; receiver against the expected type and calls directly on a hit; on a miss
+  ;; it falls back to the generic vtable path, which must be present or the
+  ;; benchmark is measuring an unsound transformation (doc/design/0004 forbids
+  ;; specialising when the target set is not finite and arity-compatible).
+  ;;
+  ;; These live in this module rather than their own so that the type graph and
+  ;; both rings are provably identical to the baselines they are compared with
+  ;; -- bench_mono and bench_direct.
+  (func $guarded (param $n i32) (param $o (ref null $obj)) (result i32)
+    (local $i i32)
+    (local.set $i (local.get $n))
+    (block $done
+      (loop $l
+        (br_if $done (i32.eqz (local.get $i)))
+        (local.set $o
+          (block $generic (result (ref null $obj))
+            (block $hit (result (ref $t0))
+              (br_on_cast $hit (ref null $obj) (ref $t0) (local.get $o))
+              ;; miss: the generic path, unchanged from bench
+              (br $generic
+                (call_ref $fn1
+                  (local.get $o)
+                  (array.get $vt1
+                    (struct.get $vtables $a1 (struct.get $obj $vt (local.get $o)))
+                    (i32.const 0)))))
+            ;; hit: guard passed, call the known target directly
+            (call $m0)))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (br $l)))
+    (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
+
+  ;; Every step hits — what specialisation buys when the analysis is right.
+  (func (export "bench_guarded_hit") (param $n i32) (result i32)
+    (call $guarded (local.get $n) (global.get $mono-head)))
+
+  ;; Two of eleven steps hit — what it costs when the analysis is mostly wrong.
+  (func (export "bench_guarded_miss") (param $n i32) (result i32)
+    (call $guarded (local.get $n) (global.get $ring-head)))
+
   ;; Control for bench_mono: the SAME ring and the SAME callee ($m0, casting to
   ;; $t0), reached by a direct call instead of through the vtable. So
   ;; bench_mono minus bench_direct is dispatch and nothing else — the earlier
