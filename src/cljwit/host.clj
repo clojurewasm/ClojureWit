@@ -594,9 +594,20 @@
       (when (.compareAndSet closed false true)
         ;; Before the store goes: a handle that outlives it holds a dangling
         ;; context, which is the one real use-after-free in this row (0016 D).
-        (run! (fn [^java.lang.AutoCloseable h] (.close h)) @registry)
-        (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
-        (.close arena)))
+        ;;
+        ;; A handle's `drop` can throw — a guest that trapped leaves the
+        ;; instance unable to be entered, so every drop then fails. Letting
+        ;; that escape here would skip `store_delete` and `arena.close`
+        ;; entirely, and the retry would be a silent no-op because `closed` is
+        ;; already set: the same shape as the bug this ordering was written to
+        ;; fix, one level down. Teardown always completes; the first failure is
+        ;; rethrown after it.
+        (let [errs (reduce (fn [acc ^java.lang.AutoCloseable h]
+                             (try (.close h) acc (catch Throwable t (conj acc t))))
+                           [] @registry)]
+          (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
+          (.close arena)
+          (when-let [t (first errs)] (throw t)))))
     nil)
   clojure.lang.ILookup
   (valAt [this k] (.valAt ^clojure.lang.ILookup this k ::none))

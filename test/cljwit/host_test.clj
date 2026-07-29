@@ -267,7 +267,8 @@
                 (is (= #{"local:res/bag@0.1.0#[constructor]counter"
                          "local:res/bag@0.1.0#[method]counter.bump"
                          "local:res/bag@0.1.0#consume"
-                         "local:res/bag@0.1.0#make-two"}
+                         "local:res/bag@0.1.0#make-two"
+                         "local:res/bag@0.1.0#boom"}
                        (set (host/exports i)))))
 
               (testing "own and borrow are distinct in the reflected type, not a runtime check"
@@ -337,4 +338,35 @@
               ;; instance got there first is the handle's own state.
               (is (= "#cljwit/resource[closed]" (str leaked))
                   "the instance closed it on the way out"))))
+        (finally (.delete ^File f))))))
+
+(deftest teardown-completes-even-when-a-handle-refuses-to-close
+  ;; A trapped instance cannot be entered again, so every [resource-drop] then
+  ;; fails. If that escapes `Instance/close`, `store_delete` and `arena.close`
+  ;; never run and the retry is a silent no-op, because `closed` is already
+  ;; set — the same shape as the bug the close ordering was written to fix, one
+  ;; level down. Found by an adversarial review of `0017`, not by this suite.
+  ;;
+  ;; **This test does not distinguish the fix.** Fault injection: reverting to
+  ;; the plain `run!` leaves it green, because both versions throw and both
+  ;; leave `closed` set. What differs is whether `store_delete` and
+  ;; `arena.close` ran, and that is not observable from Clojure without adding
+  ;; API for a test. What it does pin is the contract — close reports the drop
+  ;; rather than swallowing it, and the instance ends closed rather than stuck
+  ;; half-torn-down.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping teardown test")
+    (let [f (build-component! "res")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (let [i (host/instantiate a)]
+              ((i "local:res/bag@0.1.0#make-two") 1)
+              (is (thrown? clojure.lang.ExceptionInfo ((i "local:res/bag@0.1.0#boom")))
+                  "the guest traps, which poisons the instance")
+              (let [t (is (thrown? clojure.lang.ExceptionInfo (.close ^java.lang.AutoCloseable i)))]
+                (is (re-find #"cannot enter component instance" (ex-message t))
+                    "close reports the drop that failed rather than swallowing it"))
+              (is (nil? (.close ^java.lang.AutoCloseable i))
+                  "and the instance is closed afterwards, not stuck half-torn-down"))))
         (finally (.delete ^File f))))))

@@ -39,6 +39,7 @@
     (local.set $v (i32.load (call $rep (local.get $h))))
     (call $drop (local.get $h))
     (local.get $v))
+  (func (export "local:res/bag@0.1.0#boom") (result i32) (unreachable))
   (func (export "local:res/bag@0.1.0#make-two") (param $start i32) (result i32)
     (local $a i32) (local $b i32) (local $l i32)
     (local.set $a (call $alloc (i32.const 4)))

@@ -11,6 +11,10 @@ interface bag {
   }
   /// Takes the resource: ownership transfers to the guest.
   consume: func(c: counter) -> u32;
+  /// Traps. A trapped instance cannot be entered again, so every later
+  /// [resource-drop] fails — which is how a handle's `close` comes to throw
+  /// during the instance's own teardown.
+  boom: func() -> u32;
   /// Handles the caller never destructured — `0016` D.
   make-two: func(start: u32) -> list<counter>;
 }
