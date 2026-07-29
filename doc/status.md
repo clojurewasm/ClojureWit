@@ -7,11 +7,14 @@ _Short by design, and printed at every session start — so findings live in
 
 ## Next
 
-1. **`own`/`borrow` — resource handles.** `flags` and `tuple` now marshal, so
-   6 of `dev/resources/zoo.wit`'s 8 exports are callable and the four that are
-   not are all resource methods. `0012` has no accepted Clojure representation
-   for a handle, and mishandling one is a use-after-free that takes the JVM
-   down rather than a wrong answer — so this needs a design note before code.
+1. **Implement `0016` — `own<T>` handles.** `flags` and `tuple` now marshal,
+   so **4 of `dev/resources/zoo.wit`'s 8 exports are callable**; the other four
+   are resource methods. `0016` decides the shape (opaque `AutoCloseable`,
+   `close` as `try { drop } finally { delete }`, lowering an `own` transfers,
+   the instance closes outstanding handles before deleting its store) and
+   `borrow` is out of scope because it **cannot appear in a return position**.
+   The guest to test it against does not exist yet and is the first thing to
+   write.
 2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
    WASI requires them, and nothing has touched them. They also invalidate
    `0014` E's argument-buffer reuse, which is safe today only because no guest
