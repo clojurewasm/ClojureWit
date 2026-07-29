@@ -78,6 +78,24 @@ character class, or search for the surrounding prose rather than the
 identifier. This is the cheap half of the constraint already in
 `.claude/CLAUDE.md`: *ask what a negative result was incapable of showing you.*
 
+**A grep that finds something has not shown you all of it either.** The same
+day, a survey printed
+
+```
+    void *, wasmtime_context_t *, uint32_t);
+```
+
+for a callback typedef and the parameters were read as the signature. The
+return type — `wasmtime_error_t *`, not `void` — was on the line above, outside
+the window. Declaring that upcall `void` made wasmtime read a garbage register
+as an error pointer and crash *after* the callback had run correctly, so every
+printed probe said it worked.
+
+**Before binding a C function through FFM, read its whole declaration** —
+return type included — from the file, not from a match. A wrong descriptor's
+symptom is a native crash with no Clojure frame in it, and the cost of being
+sure is one `Read`.
+
 ## Two failure modes specific to surveying
 
 The general ones — no local paths, siblings' conclusions don't transfer — are
