@@ -55,10 +55,12 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
    left needs `resource` (`own`/`borrow`) or an unshipped feature (`map`,
    `list<T,N>`, `stream`/`future`), so it waits on a guest that can declare
    one — not on more host marshalling.
-4. **Settle `0010`'s crossover on the V8 lane.** wasmtime's is nine measured
-   points at 26.6%; V8's interpolates onto a −0.01 ns endpoint inside its own
-   spread, so the data bounds it only to 70–90%. Points at k = 7, 8, 10 would
-   settle it.
+4. **`0010`'s one untried falsifier is architecture, not more points.** Both
+   crossovers are closed (wasmtime 26.6% at nine points, V8 80.1% bracketed by
+   k = 7, 8, 10). What no one has run is *any* of S0 on x86_64 Linux; every
+   number in `0002` and `0010` is arm64 macOS. Indirect-branch prediction is
+   the mechanism behind wasmtime's hump, and it is the part most likely to
+   differ.
 
 ## Where we are
 
