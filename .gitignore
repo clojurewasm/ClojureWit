@@ -5,6 +5,7 @@
 /.cljwit/
 *.wasm
 !bench/**/*.wasm
+/bench/s0/out/
 .DS_Store
 .nrepl-port
 /result

@@ -8,34 +8,47 @@ _Short by design. If this file is long, something belongs in `doc/design/` or
 ## Where we are
 
 Repository, toolchain, gate, and CI are in place and verified end to end
-(`bb check` green in 0.1s; `nix develop` builds and satisfies all seven tools —
-wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0; both hooks tested including
-their failure paths). **CI is green on a fresh Linux runner in 50s** — a clone
-with nothing installed but Nix reaches the same gate. The design is written
-down in `doc/design/` and is **entirely unmeasured**.
+(`bb check` green in under 2s; `nix develop` builds and satisfies all seven
+tools — wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0). **CI is green on a
+fresh Linux runner in 50s.**
 
-`wasmtime` and `binaryen` are not required yet — `tools.json` marks them
-optional until S0 needs them, and `bb bench-s0` names them if they are missing.
+**S0 has started, and B1 is measured.** The dispatch design in
+`doc/design/0004-*` survives its first contact with an engine — the worst lane
+is 5.6× JVM Clojure against a ~10× stop condition — but it does not survive
+intact. The three headline numbers, in ns per protocol dispatch:
 
-The next thing that happens is **S0** — four hand-written WAT benchmarks that
-decide whether the dispatch design in `doc/design/0004-dispatch-design.md` is
-viable. Not the compiler. Not the host library. S0.
+| | JVM Clojure | V8 (node) | wasmtime |
+|---|---|---|---|
+| B1 | 1.52 | **0.88** (0.58×) | **8.56** (5.62×) |
+
+**V8 beats JVM Clojure outright** and its dispatch is free — speculative
+inlining reaches us, as `doc/design/0003-*` hoped. **wasmtime pays 6.2 ns**, and
+the controls say it is the *three dependent loads*, not the `call_ref`, which
+costs 0.14 ns. So the lever on the server lane is the number of indirection
+levels, and `wasm-opt -O3` will not find it. That is measured and written up in
+`doc/design/0002-measure-first.md`; `doc/design/0004-*` carries an amendment
+naming the prediction that failed.
 
 ## Next
 
-**S0 — dispatch benchmarks.** See `bench/s0/README.md` for the contract.
-Four measurements, each on both V8 (`node`) and `wasmtime`:
+**S0 — B2, B3, B4.** Same contract, `bench/s0/README.md`; run them with
+`bb bench-s0`. Predictions for all four are already recorded in
+`doc/design/0002-measure-first.md` and must not be edited.
 
 | | Measures | Decides |
 |---|---|---|
-| B1 | vtable-slot protocol dispatch | whether the whole design survives |
+| ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — viable, 0.58×/5.62× |
 | B2 | the same site with 10 receiver types | whether we beat the JVM where it hurts |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
 | B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph |
 
-**Predictions are recorded in `doc/design/0002-measure-first.md` before the
-first run.** That file is the honesty mechanism; write the numbers you expect,
-then find out.
+B2 is next and is the highest-value of the three: B1 showed the JVM baseline is
+a *fully devirtualised* monomorphic site, which is the case protocols are
+supposed to lose. B2 is where the design's actual claim lives.
+
+Then, still open and unmeasured: **does collapsing an indirection level**
+(arity array reachable straight from `$obj`, one more word per object) recover
+its ~2 ns on wasmtime? Worth a fifth module once B2–B4 are in.
 
 ## Blocked / needs a decision from outside
 
@@ -43,6 +56,13 @@ then find out.
 
 ## Verified
 
+- **The benchmark driver fails on a wrong answer, not just a slow one.** Every
+  lane's result is compared against what the benchmark claims to compute;
+  feeding it a deliberately wrong expected value stops the run with a non-zero
+  exit. Checked on all three lanes.
+- **wasmtime's process-slope timing is linear.** Wall time at n = 5/10/15/20 M
+  fits a line with an intercept indistinguishable from zero, so the slope is
+  per-iteration cost and not process startup.
 - **A cold-start session works.** A fresh agent with no prior context, given
   only `/next`, correctly identified the project, the current stage, that the
   compiler does not exist, and that the next action is to record S0 predictions

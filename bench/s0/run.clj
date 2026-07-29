@@ -1,0 +1,207 @@
+#!/usr/bin/env bb
+;; S0 benchmark driver — `bb bench-s0`. See bench/s0/README.md for the contract
+;; and .claude/rules/measurement.md for what makes a number here trustworthy.
+;;
+;;   bb bench-s0                      every benchmark, default sizes
+;;   bb bench-s0 B1                   just B1
+;;   bb bench-s0 --n 5000000 --reps 9 a quicker, noisier pass
+;;
+;; Everything it prints — machine, versions, per-lane medians, the command to
+;; reproduce — is what gets pasted into doc/design/0002-measure-first.md.
+
+(ns s0.run
+  (:require [babashka.fs :as fs]
+            [babashka.process :as p]
+            [cheshire.core :as json]
+            [clojure.edn :as edn]
+            [clojure.string :as str]))
+
+(def out-dir "bench/s0/out")
+
+;; `:export`/`:variant` name the Wasm export and the JVM function, so a module
+;; and its control are two entries over one .wat file rather than two files.
+;; `:expect` is what one invocation must return for a given n — a benchmark that
+;; is fast because it is computing the wrong thing has to fail, not just print.
+(def benchmarks
+  [{:id "B1"
+    :what "vtable-slot protocol dispatch, monomorphic"
+    :wat "bench/s0/b1_protocol.wat" :export "bench"
+    :jvm "s0.jvm.b1" :variant "dispatch"
+    :expect #(mod % 10)}
+   {:id "B1i"
+    :what "control: call_ref through a global — the indirect call, without the loads"
+    :wat "bench/s0/b1_protocol.wat" :export "bench_indirect"
+    :expect #(mod % 10)}
+   {:id "B1c"
+    :what "control: the same ring walk with the dispatch removed"
+    :wat "bench/s0/b1_protocol.wat" :export "bench_direct"
+    :jvm "s0.jvm.b1" :variant "direct"
+    :expect #(mod % 10)}])
+
+;; --- shelling out ----------------------------------------------------------
+
+(defn- sh
+  "Runs a command, returns stdout. A failure prints the tool's own stderr and
+   stops the run — a benchmark that half-ran produces numbers worse than none."
+  [& args]
+  (let [{:keys [exit out err]}
+        (apply p/shell {:out :string :err :string :continue true} args)]
+    (when-not (zero? exit)
+      (println (str "\n✗ failed: " (str/join " " args)))
+      (print err)
+      (flush)
+      (System/exit exit))
+    out))
+
+(defn- timed-sh
+  "Wall-clock nanoseconds for a whole process, stdout and stderr discarded."
+  [& args]
+  (let [t0 (System/nanoTime)
+        _  (apply sh args)]
+    (- (System/nanoTime) t0)))
+
+;; --- statistics ------------------------------------------------------------
+
+(defn- median [xs]
+  (let [v (vec (sort xs))
+        n (count v)]
+    (if (odd? n)
+      (double (nth v (quot n 2)))
+      (/ (+ (nth v (dec (quot n 2))) (nth v (quot n 2))) 2.0))))
+
+;; --- lanes -----------------------------------------------------------------
+
+(def ^:private build
+  "wat -> wasm, validated, plus a wasm-opt -O3 variant. Both are reported:
+   wasm-opt has been measured at ~1.9x on GC-heavy code elsewhere, and letting
+   that land in our column would be crediting binaryen's work to this design.
+   Memoized because a benchmark and its control share one .wat file."
+  (memoize
+   (fn [wat]
+     (let [base (str/replace (fs/file-name wat) #"\.wat$" "")
+           raw  (str out-dir "/" base ".wasm")
+           opt  (str out-dir "/" base ".opt.wasm")]
+       (fs/create-dirs out-dir)
+       (sh "wasm-tools" "parse" wat "-o" raw)
+       (sh "wasm-tools" "validate" raw)
+       (sh "wasm-opt" "-O3" "--enable-gc" "--enable-tail-call"
+           "--enable-reference-types" "--enable-exception-handling"
+           raw "-o" opt)
+       {:raw raw :opt opt}))))
+
+(defn- summarize
+  "Checks the lane computed what the benchmark claims before reporting a time.
+   A wrong-but-fast number is exactly the kind that gets quoted, so a mismatch
+   stops the run rather than printing."
+  [label {:keys [expect]} {:keys [n]} samples result]
+  (when-not (= (expect n) result)
+    (println (format "\n✗ %s: returned %s, expected %s" label result (expect n)))
+    (System/exit 1))
+  ;; The wasmtime lane has no per-run samples — it derives one number from a
+  ;; slope — so timing keys are absent rather than fabricated there.
+  (cond-> {:result result}
+    (seq samples) (assoc :ns-per-op  (/ (median samples) (double n))
+                         :min-per-op (/ (double (apply min samples)) n))))
+
+(defn- jvm-lane [{:keys [jvm variant] :as bm} {:keys [n reps warmup] :as opts}]
+  (let [m (edn/read-string (sh "clojure" "-M:bench" "-m" jvm variant
+                               (str n) (str reps) (str warmup)))]
+    (summarize "JVM Clojure" bm opts (:samples m) (:result m))))
+
+(defn- node-lane [bm wasm {:keys [n reps warmup] :as opts}]
+  (let [m (json/parse-string (sh "node" "bench/s0/harness.mjs" wasm (:export bm)
+                                 (str n) (str reps) (str warmup))
+                             true)]
+    (summarize (str "V8 " wasm) bm opts (:samples m) (:result m))))
+
+(defn- wasmtime-lane
+  "wasmtime has no in-guest clock and no way to loop across invocations, so this
+   times the whole process at n and at 2n and takes the slope. Process spawn,
+   module compilation and instantiation are identical in both and cancel out.
+   `reps` samples are taken at each of the two points rather than split between
+   them: .claude/rules/measurement.md asks for a median over at least 20 runs,
+   and a median over 10 is not that."
+  [bm wasm {:keys [n reps] :as opts}]
+  (let [export (:export bm)
+        at     (fn [k] (median (repeatedly reps #(timed-sh "wasmtime" "run"
+                                                           "--invoke" export wasm (str k)))))
+        t1     (at n)
+        t2     (at (* 2 n))
+        result (parse-long (str/trim (last (str/split-lines
+                                            (sh "wasmtime" "run" "--invoke" export wasm (str n))))))]
+    (assoc (summarize (str "wasmtime " wasm) bm opts [] result)
+           :ns-per-op (/ (- t2 t1) (double n)))))
+
+;; --- reporting -------------------------------------------------------------
+
+(defn- machine []
+  (let [os (sh "uname" "-sm")]
+    (str (str/trim os) " · "
+         (str/trim (if (str/starts-with? os "Darwin")
+                     (sh "sysctl" "-n" "machdep.cpu.brand_string")
+                     (sh "bash" "-c" "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2"))))))
+
+(defn- versions []
+  (str/join " · " (for [[tool & args] [["wasmtime" "--version"]
+                                       ["wasm-opt" "--version"]
+                                       ["wasm-tools" "--version"]
+                                       ["node" "--version"]
+                                       ["java" "-version"]]]
+                    (-> (if (= tool "java")
+                          (:err (p/shell {:out :string :err :string} "java" "-version"))
+                          (apply sh tool args))
+                        str/split-lines first str/trim))))
+
+(defn- report-row [label {:keys [ns-per-op min-per-op result]} jvm-ns-per-op]
+  (println (format "  %-26s %8.3f %11s %10s %9s"
+                   label
+                   ns-per-op
+                   (if min-per-op (format "%.3f" min-per-op) "—")
+                   (str result)
+                   (if jvm-ns-per-op
+                     (format "%.2fx" (/ ns-per-op jvm-ns-per-op))
+                     "—"))))
+
+(defn- run-benchmark [{:keys [id what wat export] :as bm} opts]
+  (println (format "\n%s — %s" id what))
+  (println (format "  n=%d  reps=%d  warmup=%d  (%s, export %s)"
+                   (:n opts) (:reps opts) (:warmup opts) wat export))
+  (println (format "  %-26s %8s %11s %10s %9s"
+                   "lane" "ns/op" "min ns/op" "result" "vs JVM"))
+  (let [{:keys [raw opt]} (build wat)
+        ;; A Wasm-only control has no JVM counterpart; the "vs JVM" column is
+        ;; then left empty rather than filled against some other benchmark's
+        ;; baseline.
+        jvm  (when (:jvm bm) (jvm-lane bm opts))
+        base (:ns-per-op jvm)]
+    (when jvm (report-row "JVM Clojure" jvm nil))
+    (report-row "V8 (node)" (node-lane bm raw opts) base)
+    (report-row "V8 (node, wasm-opt -O3)" (node-lane bm opt opts) base)
+    (report-row "wasmtime" (wasmtime-lane bm raw opts) base)
+    (report-row "wasmtime (wasm-opt -O3)" (wasmtime-lane bm opt opts) base)))
+
+;; --- entry point -----------------------------------------------------------
+
+(defn- parse-args [args]
+  (loop [args args opts {:n 20000000 :reps 20 :warmup 5} ids []]
+    (if-let [a (first args)]
+      (case a
+        "--n"      (recur (drop 2 args) (assoc opts :n (parse-long (second args))) ids)
+        "--reps"   (recur (drop 2 args) (assoc opts :reps (parse-long (second args))) ids)
+        "--warmup" (recur (drop 2 args) (assoc opts :warmup (parse-long (second args))) ids)
+        (recur (rest args) opts (conj ids a)))
+      [opts (set ids)])))
+
+(let [[opts ids] (parse-args *command-line-args*)
+      selected   (if (seq ids) (filter (comp ids :id) benchmarks) benchmarks)]
+  (when (empty? selected)
+    (println "no such benchmark. known:" (str/join ", " (map :id benchmarks)))
+    (System/exit 1))
+  (println "S0 dispatch benchmarks")
+  (println " " (machine))
+  (println " " (versions))
+  (println "  reproduce: bb bench-s0" (str/join " " *command-line-args*))
+  (doseq [bm selected] (run-benchmark bm opts))
+  (println)
+  (println "Numbers here are medians. Paste them into the measured column of")
+  (println "doc/design/0002-measure-first.md together with the two lines above."))

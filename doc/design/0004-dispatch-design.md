@@ -1,6 +1,17 @@
 # 0004 — Dispatch design (hypothesis, tested by S0)
 
-**Status:** proposed — **unvalidated**. S0 decides. · 2026-07-29
+**Status:** proposed — **B1 measured, B2–B4 outstanding**. · 2026-07-29
+
+> **Amendment, 2026-07-29 (B1).** The prediction "protocol dispatch within 2× of
+> JVM" failed on wasmtime: **5.62×** (it held on V8, at 0.58×). The cost is not
+> where this note assumed. "Three loads and an indirect call" is accurate as a
+> description, but the note treats the two as one cost; they are not close to
+> equal. On wasmtime the indirect call is **0.14 ns** and the three loads are
+> **6.0 ns**. See `doc/design/0002-measure-first.md` for the numbers and the
+> controls that separate them. Nothing below is retracted — the shape is
+> unchanged and the S0 stop condition is not tripped — but **the number of
+> indirection levels, not the indirect call, is the lever on wasmtime**, and
+> B2–B4 have not run.
 
 Clojure is a dispatch-heavy language, and dispatch is where a Wasm port most
 plausibly fails. This note states the design and the reasoning; `bench/s0/`
@@ -62,6 +73,12 @@ Cost: three loads and an indirect call. No hashing, no comparison, **no cache �
 which means no cache to thrash** when a site is megamorphic. That is the
 predicted advantage over the JVM (B2).
 
+B1 measured the three loads at 6.0 ns on wasmtime and ~0 on V8, against 0.14 ns
+for the indirect call on either. Whether collapsing a level — reaching the
+arity array straight from `$obj`, at the cost of one word per object per arity —
+recovers a proportional share is **not measured**, and is the first thing to
+measure if the wasmtime lane turns out to matter.
+
 **Arithmetic inlined on the `i31` path.** `br_on_cast_fail` both operands to a
 slow path; on the fast path, two `i31.get_s` and an `i32.add` with an overflow
 check. No call. The JVM's equivalent is two eight-way class chains plus two
@@ -92,3 +109,7 @@ new vocabulary is needed.
 
 B1 showing protocol dispatch far off JVM parity. See
 `doc/design/0002-measure-first.md` for the recorded predictions.
+
+**B1 has run and did not falsify it** — the worst lane is 5.6× against a ~10×
+stop condition. Still open: B2 (does the no-cache claim actually beat the JVM
+when a site is megamorphic?), B3, B4.

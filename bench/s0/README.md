@@ -12,6 +12,7 @@ first run. Do not read them until you have your own expectation.
 | | Module | Measures | Decides |
 |---|---|---|---|
 | **B1** | `b1_protocol.wat` | vtable-slot dispatch: 3 loads + `call_ref`, monomorphic site | Whether the design is viable at all |
+| **B1i/B1c** | (same module) | controls: `call_ref` without the loads, and no dispatch at all | Which half of B1's cost is which |
 | **B2** | `b2_megamorphic.wat` | the same site with 10 receiver types | Whether we beat the JVM where its per-call-site cache thrashes |
 | **B3** | `b3_arith.wat` | `i31` fast-path add vs a boxed slow path | Whether boxed arithmetic can be cheap |
 | **B4** | `b4_cast_depth.wat` | `ref.cast` at hierarchy depth 2 vs 6 | How flat the type graph has to be |
@@ -27,11 +28,31 @@ the same machine in the same session. A cross-machine comparison is not one.
 ## Running
 
 ```sh
-bb bench-s0
+bb bench-s0                            # everything, at the sizes the numbers were taken at
+bb bench-s0 B1                         # one benchmark
+bb bench-s0 --n 2000000 --reps 5       # a quicker, noisier pass while editing
 ```
 
-Output goes to stdout and is pasted into `doc/design/0002-measure-first.md`'s
-measured column, along with the machine and tool versions from `bb check-tools`.
+Needs `wasmtime`, `wasm-opt`, `node` and `wasm-tools` — `nix develop` has them
+at the pinned versions. The driver prints the machine, the tool versions and the
+command to reproduce, which is what gets pasted into
+`doc/design/0002-measure-first.md` alongside the numbers.
+
+Every lane's result is checked against the value the benchmark is supposed to
+compute, and a mismatch stops the run. A benchmark that is fast because it
+stopped doing the work reports as a failure, not as a good number.
+
+## Each module exports
+
+`bench` plus whatever controls it needs, all with the signature
+`(i32) -> i32` — take an iteration count, return a value that depends on every
+iteration. No imports, so the same file runs unchanged under `node` and
+`wasmtime run --invoke`. The JVM counterpart lives in `jvm/`, takes
+`<variant> <n> <reps> <warmup>`, and prints EDN.
+
+`wasmtime` has no clock in the guest and no way to loop across invocations, so
+its lane is timed by **process slope**: wall time at n and at 2n, difference
+over n. Startup, compilation and instantiation are identical in both and cancel.
 
 ## Before trusting any number here
 
@@ -42,4 +63,6 @@ errors.
 
 ## Status
 
-Not yet written. This README is the contract they have to satisfy.
+**B1 done** — numbers and what they mean are in
+`doc/design/0002-measure-first.md`. B2, B3 and B4 are not written; this README
+is the contract they have to satisfy.

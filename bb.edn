@@ -66,7 +66,7 @@
                              (System/exit 1))
                          (not (fs/exists? "bench/s0/run.clj"))
                          (println "S0 not written yet — bench/s0/README.md is its contract")
-                         :else (run "bb" "bench/s0/run.clj")))}
+                         :else (apply run "bb" "bench/s0/run.clj" *command-line-args*)))}
 
   ;; The gate prints its own wall time on purpose. When it drifts past ~60s the
   ;; push-time hook stops being a good trade — and this is how that becomes

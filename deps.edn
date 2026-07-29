@@ -14,6 +14,11 @@
          :main-opts   ["-m" "cognitect.test-runner"]
          :exec-fn     cognitect.test-runner.api/test}
 
+  ;; `clj -M:bench -m s0.jvm.b1` — the JVM side of an S0 comparison. Driven by
+  ;; bench/s0/run.clj; the baseline has to run on the same machine in the same
+  ;; session as the Wasm lanes for the comparison to mean anything.
+  :bench {:extra-paths ["bench"]}
+
   ;; `clj -M:nrepl` — editor connection (CIDER / Calva / any nREPL client)
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0"}
                        cider/cider-nrepl {:mvn/version "0.57.0"}}
