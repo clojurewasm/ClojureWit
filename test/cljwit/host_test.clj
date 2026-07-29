@@ -370,3 +370,44 @@
               (is (nil? (.close ^java.lang.AutoCloseable i))
                   "and the instance is closed afterwards, not stuck half-torn-down"))))
         (finally (.delete ^File f))))))
+
+(deftest host-imports
+  ;; `0017`. The mechanism is `bb spike-import`; this is the API over it.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping host-import test")
+    (let [f (build-component! "imp")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+
+            (testing "a component with an unsatisfied import names it, and both halves"
+              (let [ex (is (thrown? clojure.lang.ExceptionInfo (host/instantiate a)))]
+                (is (re-find #"local:imp/host@0\.1\.0" (ex-message ex)))
+                (is (re-find #"twice" (ex-message ex))
+                    "wasmtime names the function too — 0017 B's first draft said it did not")))
+
+            (testing "0017 A — an import is an ordinary Clojure function"
+              (with-open [i (host/instantiate
+                             a {:imports {"local:imp/host@0.1.0#twice" (fn [v] (* 2 v))}})]
+                (is (= 41 ((i "run") 20)) "the guest called back and added one")
+                (is (= 3 ((i "run") 1)))))
+
+            (testing "0017 B — an import that is not needed is a typo, not a courtesy"
+              (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                                    (host/instantiate
+                                     a {:imports {"local:imp/host@0.1.0#twice" identity
+                                                  "local:imp/host@0.1.0#thrice" identity}})))]
+                (is (= :no-such-import (:cljwit/error (ex-data ex))))
+                (is (some #{"local:imp/host@0.1.0#thrice"} (:cljwit/extra (ex-data ex))))))
+
+            (testing "0017 D — a Clojure exception surfaces, and the instance is dead after it"
+              (with-open [i (host/instantiate
+                             a {:imports {"local:imp/host@0.1.0#twice"
+                                          (fn [_] (throw (ex-info "clojure blew up" {})))}})]
+                (let [ex (is (thrown? clojure.lang.ExceptionInfo ((i "run") 1)))]
+                  (is (re-find #"clojure blew up" (ex-message ex))
+                      "the host's own message reaches the caller"))
+                (let [ex (is (thrown? clojure.lang.ExceptionInfo ((i "run") 1)))]
+                  (is (= :instance-dead (:cljwit/error (ex-data ex)))
+                      "and the next call says the instance is dead rather than reporting a trap"))))))
+        (finally (.delete ^File f))))))
