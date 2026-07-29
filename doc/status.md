@@ -105,10 +105,12 @@ changed something; this is the index.
   group and `0003`'s runtime table — both corrected in place.
 - **A dev-shell convenience took CI from ~50s to ~20min.** `git` was added to
   `flake.nix` so `bb ref` would work inside the shell, and it drags perl and its
-  documentation into the closure. `gitMinimal` is the fix. **Nothing caught
-  it**: the local gate reports its own wall time and stayed at ~1s, because the
-  cost was entirely in fetching the shell. The second "green locally, different
-  on CI" incident, after the untracked empty directories.
+  documentation into the closure. `gitMinimal` fixed it — CI back to **58s**,
+  as predicted before the change. **Nothing caught it**: the local gate reports
+  its own wall time and stayed at ~1s, because the cost was entirely in
+  materialising the shell. The second "green locally, different on CI"
+  incident, after the untracked empty directories — and the lesson is that a
+  flake change is a CI change.
 
 **Four of the six are the same failure**: generalising from an experiment that
 varied more than one thing. The rule for it was added the same day and did not
