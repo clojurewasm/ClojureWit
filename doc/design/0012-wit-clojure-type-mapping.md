@@ -1,118 +1,235 @@
 # 0012 — The WIT ⇄ Clojure type mapping
 
-**Status:** proposed — **unimplemented and untested**. · 2026-07-30
+**Status:** proposed — **unimplemented and untested**. Rewritten 2026-07-30
+after review found the first draft wrong in most of its hard cases; what it got
+wrong is recorded at the end rather than quietly fixed. · 2026-07-30
 
 ## The question
 
 `0001` says `cljwit.host` ships first partly because it "forces the WIT ↔
-Clojure type mapping (the hardest shared problem) to be solved once". This is
-that. The compiler will need the same mapping in the other direction, so
-getting it wrong here costs twice.
+Clojure type mapping (the hardest shared problem) to be solved once". The
+compiler needs the same mapping in the other direction, so getting it wrong
+costs twice.
 
-The WIT value types, from `.ref/component-model` `design/mvp/Explainer.md`:
-`bool`, the eight sized integers, `f32`/`f64`, `char`, `string`, `record`,
-`variant`, `list<T>`, fixed-length `list<T,N>`, `tuple`, `flags`, `enum`,
-`option<T>`, `result<T,E>`, `map<K,V>`, `own`/`borrow`, `stream`/`future`,
-`error-context`.
+Spec read at `.ref/component-model` commit `73b7ad51` (2026-07-28) —
+[WebAssembly/component-model], `design/mvp/{Explainer,CanonicalABI,WIT}.md`.
+Prior art read at `.ref/wit-bindgen` — [bytecodealliance/wit-bindgen], whose
+C backend is the closest existing answer for a language with no native
+`option`, `result` or sum types.
 
-## The rule that decides the easy cases
+## The decision
 
-**Lowering is type-directed; lifting is not.** A call always knows the WIT
-signature, so going Clojure → WIT can consult the declared type and does not
-have to infer anything from the value's shape. Coming back, WIT → Clojure, the
-type is equally known — so the mapping only has to be *unambiguous given the
-type*, not globally injective. That is what lets `enum`, `flags` and `string`
-all use keywords and strings without colliding.
+**A type mapping first, and calling-convention sugar on top of it — never
+instead of it.** The first draft conflated the two and defined `result` only
+for return position, which left `list<result<u32, string>>` with no meaning.
 
-## The mapping
+### The types
 
-| WIT | Clojure | notes |
-|---|---|---|
-| `bool` | `true` / `false` | |
-| `s8 s16 s32 s64 u8 u16 u32` | integer | all fit a `long` |
-| `u64` | integer, possibly `BigInt` | see divergence 2 |
-| `f32` `f64` | double | `f32` is lifted widened; lowering narrows |
-| `char` | `Integer` (a code point) | **not** `Character` — see divergence 3 |
-| `string` | `String` | |
-| `list<T>` | vector | |
-| `list<T,N>` | vector | length checked on lowering |
-| `tuple<A,B,…>` | vector | indistinguishable from `list` in Clojure, distinguished by the type |
-| `record` | map, keyword keys | field names kebab-cased |
-| `enum` | keyword | |
-| `flags` | set of keywords | |
-| `variant` | `[:case-name value]`, or `[:case-name]` when the case has no payload | |
-| `option<T>` | value, or `nil` for `none` | see divergence 1 |
-| `result<T,E>` | value on ok; **throws** `ex-info` on error | see below |
-| `map<K,V>` | map | |
-| `own<T>` / `borrow<T>` | an opaque handle object | see below |
-| `stream<T>` / `future<T>` | not mapped in S1 | WASI 0.3; deferred |
-| `error-context` | not mapped in S1 | |
+`gate` is the spec's own feature marker (`Explainer.md:53-70`): unmarked ships
+in WASI 0.2, 🔀 in WASI 0.3, and 🗺️ 🔧 📝 are **in no shipped release**.
 
-## The three decisions that are not obvious
+| WIT | gate | Clojure | |
+|---|---|---|---|
+| `bool` | | `true` / `false` | |
+| `s8 s16 s32 s64 u8 u16 u32` | | integer | all fit a `long` |
+| `u64` | | integer or `BigInt` | L2 |
+| `f32` `f64` | | double | L3, L4 |
+| `char` | | `Integer` code point | L5 |
+| `string` | | `String` | L6 |
+| `list<T>` | | vector | |
+| `tuple<A,B,…>` | | vector | distinguished from `list` by the type |
+| `record` | | map, keyword keys | labels are already kebab-case |
+| `enum` | | keyword | |
+| `flags` | | set of keywords | 1–32 members, per `CanonicalABI.md:2294` |
+| `variant` | | `[:case-name value]`, `[:case-name]` when the case has no payload | |
+| `option<T>` | | value, `nil` for `none` | L1 |
+| `result<T,E>` | | `[:ok v]` / `[:err e]`, either payload omitted when absent | see sugar |
+| `own<T>` | | handle, closed by the caller | see resources |
+| `borrow<T>` | | handle; **received** ones are call-scoped | see resources |
+| `list<T,N>` | 🔧 | vector, length checked | not in a shipped release |
+| `map<K,V>` | 🗺️ | **vector of `[k v]` pairs** | L7; not in a shipped release |
+| `stream<T>` `future<T>` | 🔀 | not mapped in S1 | shipped in WASI 0.3; deferred because async has no mapping yet |
+| `error-context` | 📝 | not mapped in S1 | not in a shipped release |
 
-**`result<T,E>` throws rather than returning a tagged value.** A Clojure caller
-writing `(resize/thumbnail bytes 128 128)` should get the thumbnail, not
-`[:ok thumbnail]` to destructure. The error becomes `ex-info` with the lifted
-`E` in `ex-data` under `:wit/error`, so nothing is lost and `try` is the
-idiomatic handler. **Rejected:** returning `[:ok v]`/`[:err e]`, which is
-lossless and honest but makes every call site unwrap and makes the common path
-noisy; and returning `nil` on error, which conflates with `option`.
+### The sugar
 
-**Resources are opaque handles with explicit lifetime.** `own<T>` and
-`borrow<T>` lift to an object the host holds, not to anything inspectable.
-Clojure has no destructors, so an `own` handle is closed by `with-open` or an
-explicit `close`, and dropping one on the floor leaks until the store dies.
-**Rejected:** tying handle lifetime to GC finalization — finalizers are
-unordered and unreliable, and Cloudflare's own write-up on `FinalizationRegistry`
-is a long argument for not doing this.
+**`result` in return position also gets a throwing wrapper.** `(f args)`
+returns the ok payload and throws on error; `(f* args)` returns the tagged
+value. Two vars per function, generated together. The throw carries the lifted
+`E` in `ex-data` under `:wit/error` along with the WIT type name, so `catch`
+can dispatch on the payload even though the class is always `ExceptionInfo`.
 
-**`char` is a code point, not a `Character`.** A WIT `char` is a Unicode scalar
-value up to `U+10FFFF`; a Java `Character` is a 16-bit UTF-16 code unit. Half
-the WIT `char` space does not fit. Using an `Integer` code point is ugly in
-Clojure and correct. **Rejected:** `Character`, which silently truncates
-anything above the BMP — exactly the class of failure `0008` forbids.
+Everywhere else — parameters, record fields, list elements, variant payloads —
+`result` is the tagged value and nothing throws.
 
-## Divergences from `clojure`, numbered per `0008`
+## Why
 
-These are places where a Clojure program can observe something a JVM Clojure
-program could not, and `.claude/CLAUDE.md` requires them to be named rather than
-left as surprises.
+**Because `result` is WIT's recovery channel, not its panic channel.**
+`Explainer.md:720-725` says so normatively: "explicit `result` or `variant`
+types must be used in the function return type" for error recovery.
+`wasi:filesystem` returns `result<_, error-code>` for a missing file. Making
+the recovery channel throw inverts it — and wit-bindgen's C backend, the
+closest prior art for a language without sum types, represents `result` as a
+struct with a `bool is_err` discriminant, a value, not an exception.
 
-**Divergence 2 — `u64` above 2^63.** A `long` cannot hold it. Values that fit
-lift as `long`; values above lift as `BigInt`, so the *type* of a lifted `u64`
-depends on its value. **Falsifiable alternative:** always lift `u64` as
-`BigInt`, which is consistent and allocates on every call for a case most
-interfaces never hit. Chosen the way round that keeps the common path cheap.
+**Because throwing composes badly with Clojure's own laziness.**
+`(map #(component-call %) coll)` is a lazy seq; a throw fires at realisation,
+in whatever dynamic scope forces it — possibly outside the `with-open` holding
+the resources the call used. In a transducer it discards the successfully
+lifted prefix. `0008` names laziness as observable and non-negotiable. The
+tagged value has none of these hazards; the sugar has all of them and is opt-in.
 
-**Divergence 3 — nested `option`.** `option<option<T>>` has two distinct values
-that both map to `nil`: `none` and `some(none)`. The mapping is therefore not
-injective for nested options and **round-tripping one is not supported**.
-**Rejected:** wrapping every `some` as `[:some v]`, which is injective and makes
-the overwhelmingly common single-level `option` unidiomatic. WIT interfaces
-nest options rarely; if that turns out to be wrong, this is the decision to
-revisit first.
+**Because `ex-info` is not free.** It extends `RuntimeException` with a
+writable stack trace, so constructing one fills in the stack — plausibly
+comparable to the ~µs component call it reports on (`0011`). Unmeasured, and
+named as such: a `result`-per-call interface should not pay it by default.
+
+**Because the type-directed argument only ever justified non-injectivity.**
+The first draft's headline rule, "lowering is type-directed; lifting is not",
+contradicted its own next sentence. Both directions know the type. What the
+type buys is that the mapping **need not be globally injective** — `enum`,
+`flags` and `string` can share keywords and strings without colliding. It does
+*not* rescue a mapping that is ambiguous *within* a type, which is what
+nested `option` and `map` are.
+
+## Resources
+
+The C API has **one** resource val kind — `WASMTIME_COMPONENT_RESOURCE`, no
+`own`/`borrow` split at the boundary — but the two differ in who drops
+(`Explainer.md:672-673`): an `own` is destroyed when the value is dropped; a
+`borrow` "must be dropped before the current export call returns".
+
+- **`own<T>` received** → the caller closes it. `with-open` is correct.
+- **`borrow<T>` received** → call-scoped; the callee drops it. `with-open` on
+  one is a double-drop.
+- **`borrow<T>` passed** → still ours. `with-open` is correct.
+
+**Closing is two operations, not one.** Per wasmtime's `component/val.h`:
+`..._drop` once per logical resource — omitting it "will be leaked into the
+store **and a trap may be raised**", so a dropped handle is not merely a leak —
+and `..._delete` once per *handle*, where `..._clone` makes another handle
+needing another `delete` and no further `drop`. A single `Closeable/close`
+therefore cannot be the whole story and the wrapper has to track both counts.
+
+## Alternatives rejected
+
+- **`result` throwing as the type mapping** (the first draft). Rejected above:
+  it has no meaning in non-return position, inverts WIT's error channel, and
+  fights laziness. Kept as opt-in sugar because the ergonomic argument for
+  `(resize/thumbnail bytes 128 128)` returning a thumbnail is real.
+- **Returning the exception object without throwing.** Equivalent to the tagged
+  form but loses the case label, which `variant`-shaped errors need.
+- **`char` as `Character`.** Cannot hold `U+10000..U+10FFFF` — half the space —
+  and truncates silently, the failure `0008` forbids.
+- **`char` as a one-character `String`.** The strongest alternative, and what
+  ClojureScript effectively does since it has no char type: lossless, composes
+  with `str`/`subs`. Rejected because it makes `list<char>` and `string`
+  indistinguishable in Clojure, and because wit-bindgen's C backend reaches the
+  same `uint32_t` answer — with a `// TODO: better type?` beside it, which is
+  an honest signal that nobody likes this and nobody has better.
+- **`map<K,V>` as a Clojure map.** Rejected on three counts, all from the spec:
+  the key space is a restricted subset (`Explainer.md:624` — no floats, no
+  aggregates); WIT `map` despecialises to `(list (tuple K V))` and **the
+  Component Model does not prevent duplicate keys** (`Explainer.md:840-848`),
+  so lifting into a Clojure map silently drops entries; and it is ordered where
+  a Clojure map is not, which `0008` puts on the far side of the boundary. A
+  vector of pairs is lossless and `(into {} …)` is one call away.
+- **Resource lifetime by GC finalisation.** The first draft rejected this by
+  citing a Cloudflare article about JavaScript's `FinalizationRegistry` — wrong
+  platform, and exactly the inherited-conclusion error `.claude/CLAUDE.md`
+  warns about. Re-derived: the JVM's `java.lang.ref.Cleaner` is not the
+  deprecated `finalize()` and is the standard backstop under explicit close.
+  **Not rejected — deferred**: a `Cleaner` that calls `drop`+`delete` if the
+  caller forgets turns a possible trap into a late release, and whether that is
+  worth the machinery is an implementation decision, not this note's.
+- **`defrecord` for `record`, tagged maps for `variant`, lists for `tuple`.**
+  Rejected for uniformity: plain maps and vectors round-trip through `pr-str`,
+  work with `clojure.spec`, and need no generated classes. Recorded because the
+  first draft rejected nothing here at all.
+
+## Lossy mappings — *not* `0008` divergences
+
+The first draft numbered these as divergences under `0008` and got the category
+wrong. `0008`'s test is "run the same source under `clojure` and under cljwit
+and compare"; a `cljwit.host` program **cannot** run under `clojure`, so there
+is no behaviour to diverge from. These are lossy points in a new library's API.
+They are lettered here, and divergence numbers stay reserved for the compiler,
+where the oracle exists.
+
+- **L1 — nested `option`.** `option<option<T>>` maps `none` and `some(none)`
+  both to `nil`. Round-tripping one is unsupported. Wrapping every `some` would
+  be injective and would make single-level `option` — overwhelmingly the common
+  case — unidiomatic.
+- **L2 — `u64` above 2^63.** Lifts as `BigInt`, so the *type* of a lifted `u64`
+  depends on its value.
+- **L3 — `f32` narrowing.** `(= 0.1 (double (float 0.1)))` is **false**. No
+  `f32` round-trips exactly. Lowering a double outside `f32` range is
+  **undecided**: JVM Clojure's `float` throws, `.floatValue` gives `Infinity`.
+- **L4 — NaN.** `CanonicalABI.md:2415-2427` canonicalises NaN, discarding sign
+  and payload, and `:2734`'s `maybe_scramble_nan32` lets the host substitute a
+  *random* pattern. Observable through `Double/doubleToRawLongBits`.
+- **L5 — `char` and the surrogate hole.** Valid values are
+  `0..0xD7FF` and `0xE000..0x10FFFF` (`CanonicalABI.md:2775-2779`); an
+  `Integer` in `[0xD800,0xDFFF]` is representable in Clojure and **traps** on
+  lowering.
+- **L6 — `string`.** A Java `String` may hold an unpaired surrogate; a WIT
+  `string` is a sequence of scalar values, so such a string cannot be lowered.
+  There is also a ceiling: `MAX_STRING_BYTE_LENGTH = (1<<28)-1`
+  (`CanonicalABI.md:2493`). Encoding is a `canonopt`
+  (`Explainer.md:1383-1385`) the *compiler* will have to choose; for the host
+  wasmtime does.
+- **L7 — `map`.** Duplicate keys and ordering, above.
+- **L8 — integer range on lowering is undecided.** `CanonicalABI.md:3435`:
+  "component-level values are assumed in-range" — the ABI does not check, so
+  the host must, and whether lowering `300` into a `u8` throws or wraps is not
+  yet chosen.
+- **L9 — traps and `result` errors are indistinguishable.** An invalid `char`,
+  an oversized string or bad UTF-8 all trap and surface as JVM exceptions
+  alongside the sugar's `ex-info`. `0008` puts error dispatch on the
+  non-negotiable side, so this needs a distinct exception type before the API
+  hardens.
+- **L10 — `nil` is overloaded.** `none`, a function with no result, `result`
+  with an absent ok payload, and a variant case with no payload all reach
+  Clojure as `nil` or `[:case]`. Unambiguous given the type; worth stating.
 
 ## What would falsify this
 
-**A round-trip test, and it does not exist yet.** The check this note needs is
-an echo component — one exported function per WIT type, returning its argument
-— driven from Clojure, asserting `(= v (echo v))` for a generated set of values
-per type. Until that runs, everything above is a table someone wrote down.
+**An echo component — one export per type returning its argument — driven from
+Clojure.** It does not exist, which is why this note is `proposed`.
 
-Concretely it would falsify:
+The first draft priced that at "thousands of lines" of hand-written canonical
+ABI, citing `0007`. **That was wrong**: `0007` sizes writing an *engine's* ABI.
+The echo *guest* needs none — `wasm-tools component new` is already pinned and
+already used by `bb spike-host`, and `wit-bindgen` generates the guest side for
+Rust or C. The real cost is a guest crate plus a Clojure driver over the `0011`
+spike, and **the scalar half could have been landed as a test already.**
 
-- any mapping that cannot round-trip, beyond the two divergences named;
-- the claim that type-directed lowering resolves the ambiguity — if some type
-  pair turns out to need value-shape inspection, the rule at the top is wrong;
-- the `result` decision, if throwing loses error information that matters.
+`(= v (echo v))` is the right assertion for `bool`, the integers, `string`,
+`list`, `tuple`, `record`, `enum`, `flags` and `variant` — and wrong for the
+rest, each for its own reason:
 
-Building that component means writing the canonical ABI by hand for aggregates
-— `memory` plus `cabi_realloc` plus lift/lower per type, which `0007` sizes at
-thousands of lines in the sibling zwasm. **So this note is `proposed`, not
-accepted, and should not be built on until the echo test exists.**
+| row | assertion |
+|---|---|
+| `f32` | round to `f32` before comparing |
+| any float, NaN | compare `doubleToRawLongBits`; `(= NaN NaN)` is false |
+| any float, `-0.0` | `=` **passes spuriously** — `(= 0.0 -0.0)` is true, so a lost sign of zero goes undetected |
+| `char` | generator must emit `Integer`s; `(= \a 97)` is false |
+| `result` | the sugar throws, so assert on the thrown `ex-data`; the tagged form uses `=` |
+| `own` | a lifted handle is a fresh object — assert on the underlying resource, not `=` |
+| `map` | assert length on the WIT side; dedup and reorder are invisible to `=` |
 
-## Why decide it now rather than after the test
+## What the first draft got wrong
 
-Because the test is expensive and the mapping decides its shape: what to
-generate, what to compare, and which cases are expected to fail. Writing the
-table first makes the test a check on a claim rather than an exploration.
+Recorded rather than silently fixed, because the pattern is the project's own:
+it summarised `Explainer.md`'s grammar line and read neither the gate legend
+forty lines above nor the despecialisation prose two hundred below.
+
+It presented `map`, `list<T,N>` and `error-context` — none in a shipped
+release — as peers of `bool`, while deferring `stream`/`future`, which *are*
+shipped. It defined `result` only for return position. It pointed two table
+rows at the wrong lossy cases. It rejected GC finalisation on JavaScript
+evidence. It named two lossy mappings where there are ten. And it justified not
+testing with a cost it need not pay.
+
+[WebAssembly/component-model]: https://github.com/WebAssembly/component-model
+[bytecodealliance/wit-bindgen]: https://github.com/bytecodealliance/wit-bindgen

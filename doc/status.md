@@ -48,10 +48,12 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 2. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).
-3. **Read `.ref/wit-bindgen`.** Four language backends have already answered
-   the questions `0012` is deciding — how to map `result`, `char`, and nested
-   `option` — and neither the note nor its review read them. `refs.json` calls
-   it "the shape to match". wasmtime's is now
+3. **Land the scalar half of `0012`'s echo test.** The mapping is written
+   (`0012`, `proposed`) and its falsifier is an echo component. That does *not*
+   need a hand-written canonical ABI — `wasm-tools component new` is already
+   pinned and `wit-bindgen` generates the guest — so `bool`, the integers,
+   `string`, `enum` and `record` can be asserted now, and the note stops being
+   a table someone wrote down. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.
@@ -113,7 +115,7 @@ is unmeasured.** That is S0's residue and it belongs to S3.
 
 ## Incidents so far
 
-Seven, all on 2026-07-29/30 — the first two days. Each is written up where it
+Eight, all on 2026-07-29/30 — the first two days. Each is written up where it
 changed something; this is the index.
 
 - **The gate passed locally and failed in CI** — empty `src/` and `test/` that
@@ -130,6 +132,12 @@ changed something; this is the index.
   `doc/design/0007-*` carries the correction.
 - **Two design conclusions drawn from one-variable experiments** — `0009`'s rec
   group and `0003`'s runtime table — both corrected in place.
+- **`git add -A` committed a design note the commit was not about.**
+  `doc/design/0012` went in with a benchmark commit whose message never
+  mentions it, minutes before a review found it wrong in most of its hard
+  cases. Corrected in place rather than reverted, with what it got wrong
+  recorded in the note. The lesson is to stage by path when a working tree
+  holds unrelated work.
 - **A dev-shell convenience took CI from ~50s to ~20min.** `git` was added to
   `flake.nix` so `bb ref` would work inside the shell, and it drags perl and its
   documentation into the closure. `gitMinimal` fixed it — CI back to **58s**,
