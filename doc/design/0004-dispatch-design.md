@@ -116,10 +116,18 @@ new vocabulary is needed.
 - **Whole-program analysis is expensive.** Start at 0-CFA; give the analysis a
   budget, and when it is exceeded, lower the specialization level rather than
   running longer. Failing conservative is always sound.
-- **`ref.cast` cost grows with hierarchy depth** in typical engine
-  implementations. Keep the type graph shallow and wide — which means *not*
-  mirroring `clojure.lang`'s 55-interface tree. B4 measures whether this
-  matters as much as assumed.
+- ~~**`ref.cast` cost grows with hierarchy depth.** Keep the type graph shallow
+  and wide.~~ **Falsified by B4, 2026-07-29, on both halves.** Depth is flat
+  from 2 to 5 (3.669 → 3.698 ns on wasmtime), and *wide* is what a cast pays
+  for: casting to a type ten others extend costs 2.80 ns where casting to the
+  object's own leaf type costs 0.09, and letting ten input types reach one cast
+  site adds another 2.14. V8 shows none of it.
+
+  The guidance that replaces it: **cast to leaves, and keep the set of types
+  reaching a cast site small.** Not mirroring `clojure.lang`'s 55-interface tree
+  is still right, but for the opposite reason — that tree is broad, not deep.
+  This is also the same lever as call-site specialisation below, seen from the
+  other side: a specialised site casts to a known leaf.
 - **`eval` and runtime `extend-type` break the closed-world assumption** that
   vtable coloring depends on. Handled by reserving an overflow slot and a side
   table, paid for only by builds that ask for it.

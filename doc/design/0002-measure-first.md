@@ -37,7 +37,8 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B1 | protocol dispatch, monomorphic | **within 2× of JVM** — JVM's cached path is 1 compare + interface call; ours is 3 loads + `call_ref` | **half right.** V8 **0.58×** (faster than JVM); wasmtime **5.61×**. The prediction holds on V8 and fails on wasmtime. The reasoning is wrong on both: the cost is neither the `call_ref` nor the three loads, but the first of them. |
 | B2 | protocol dispatch, 10 receiver types at one site | **faster than JVM** — the JVM's per-call-site cache thrashes; a vtable slot has no cache to thrash | **half right, and the mechanism is right.** V8 **0.61×** — faster than JVM, prediction holds; wasmtime **2.84×** — slower, prediction fails. But megamorphism costs wasmtime **+9%** against the JVM's **+114%**, so "no cache to thrash" is confirmed. V8 degrades **+122%**, because it *does* speculate and loses it. |
 | B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | _pending_ |
-| B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | _pending_ — but B2 raised a question about the axis: see below |
+| B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | **falsified.** Depths 2, 3, 4 and 5 cost 3.669, 3.667, 3.672 and 3.698 ns on wasmtime — flat to within 1%. Depth is free; the prediction named the wrong axis, and so did the design guidance it supported. |
+| B4b | the axis B2 questioned: `ref.cast` cost vs *variety of input types*, depth held fixed | **recorded 2026-07-29, before the run, and it contradicts B4's own prediction above.** Both engines implement a cast as a constant-time supertype-array probe, so **neither depth nor variety should matter measurably**, and B4's original prediction is wrong. The 6.81-vs-2.33 gap in B2 that raised the question was confounded — it varied the ring *and* the callee — and I expect it to be the mixed ring's dispatch, not the cast. Falsified if either axis moves the number more than the run-to-run spread. | **half right.** Depth: flat, as predicted. Variety: **+2.14 ns on wasmtime** (3.718 → 5.860), so B2's lead was real and this prediction is falsified on that axis. On V8 neither moves anything (0.843 → 0.844). |
 | B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor — 0.06 ns, far better than the 1 ns predicted. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
 | B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover **~26% on wasmtime, ~80% on V8** — a 3× difference between lanes. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
@@ -252,6 +253,47 @@ emit per-lane builds (a second artifact, and `0009` already constrains what
 those can be), or make it a build knob and document the trade. That is a
 decision for S3, and it is now grounded rather than guessed.
 
+## B4 — measured 2026-07-29. Depth is free; the design guidance was backwards.
+
+A straight chain `$obj → $d2 → … → $d5` with ten leaf types at depth 6, all
+carrying the same fields, so the cast target and the input variety can be moved
+independently. `cast_none` is the floor — the same ring walk with no cast.
+
+ns per step, **wasmtime | V8**, with the delta over the floor:
+
+| | ns | over floor |
+|---|---|---|
+| no cast (floor) | 0.920 \| 0.677 | — |
+| cast to depth 2 | 3.669 \| 0.774 | 2.75 \| 0.10 |
+| cast to depth 3 | 3.667 \| 0.783 | 2.75 \| 0.11 |
+| cast to depth 4 | 3.672 \| 0.838 | 2.75 \| 0.16 |
+| cast to depth 5 | 3.698 \| 0.837 | 2.78 \| 0.16 |
+| **cast to depth 6 — the object's own leaf type** | **1.007 \| 0.732** | **0.09 \| 0.06** |
+| cast to depth 5, 1 input type | 3.718 \| 0.843 | 2.80 \| 0.17 |
+| **cast to depth 5, 10 input types** | **5.860 \| 0.844** | **4.94 \| 0.17** |
+
+**1. Depth costs nothing.** Flat to within 1% from depth 2 to depth 5 on
+wasmtime, and inside the spread on V8. The recorded B4 prediction is falsified.
+
+**2. What costs is casting to a type that has subtypes.** Same object, same
+ring, same depth-6 input: casting to `$d5` costs 2.80 ns and casting to `$v0` —
+the object's own leaf type, which nothing extends — costs 0.09. That is a
+single-variable comparison, and it is a 30× difference.
+
+**3. And it costs again when the input varies.** Target held at `$d5`, ring
+changed from one leaf type to ten: **+2.14 ns**. B2's lead was real. V8 shows
+none of this — 0.843 against 0.844 — so it is a Cranelift property, not a Wasm
+one.
+
+**4. The design guidance in `0004` was aimed at the wrong axis, and pointed the
+wrong way.** "Keep the type graph shallow and wide" is exactly backwards:
+shallow buys nothing, and *wide* is what a cast pays for. The rule the numbers
+support is **cast to leaves, and keep the set of types reaching a cast site
+small** — which is the same thing call-site specialisation already does, so B4
+and B5 are the same lever seen twice. A specialised site casts to a known leaf
+type and pays 0.09 ns; a generic one casts to a broad supertype over many
+inputs and pays up to 4.94.
+
 **Threats to validity, recorded so the number is not over-read.**
 
 - The benchmark is a **dependency chain** — each dispatch's result is the next
@@ -282,6 +324,11 @@ decision for S3, and it is now grounded rather than guessed.
 - **B5's guard tests one type.** A real specialised site with several candidates
   needs several guards or a switch, and nothing here says what the second and
   third cost. The 0.06 ns result is the best case by construction.
+- **B4's "leaf type" reading is inferred.** What is measured is that a cast to
+  `$v0` (which nothing extends) is 30× cheaper than a cast to `$d5` (which ten
+  types extend). Whether Cranelift keys that on the target being a leaf, on it
+  being effectively final, or on something else was not established; no
+  disassembly was read.
 - **B7's rings hold two types, B5x's held ten.** They are not points on one
   curve, and treating them as such is how B7's prediction went wrong: the
   per-miss cost extrapolated from B5's two points was 14.6 ns, and B7 measured

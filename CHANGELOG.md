@@ -29,6 +29,9 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
   gained the reference sources it needs.
 - **`doc/design/0007`** — the component boundary is linear memory, not GC.
   Found by the first survey; sizes S4 and adds an open question to the roadmap.
+- **S0 B4** — what a `ref.cast` costs, on two axes. Depth is free; casting to a
+  type that has subtypes is 30× a cast to a leaf, and input variety adds more.
+  Falsifies `0004`'s "shallow and wide" guidance, which was backwards.
 - **S0 B7** — the specialisation crossover: five rings varying only how often
   the guard hits. Specialising starts paying at ~26% on wasmtime and ~80% on
   V8, so there is no single threshold a compiler can use for both lanes.

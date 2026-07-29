@@ -115,6 +115,40 @@
    {:id "B7n11"
     :what "crossover: generic dispatch on the same ring, 11 of 11 would hit"
     :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_11"
+    :expect #(mod % 11)}
+   ;; B4 — the cast, on two axes: depth of the target, and variety of the input.
+   ;; Every row is B4n plus one ref.cast.
+   {:id "B4n"
+    :what "floor: the same walk with no cast at all"
+    :wat "bench/s0/b4_cast.wat" :export "cast_none"
+    :expect #(mod % 11)}
+   {:id "B4d2"
+    :what "ref.cast to a type at depth 2, one input type"
+    :wat "bench/s0/b4_cast.wat" :export "cast_depth_2"
+    :expect #(mod % 11)}
+   {:id "B4d3"
+    :what "ref.cast to a type at depth 3, one input type"
+    :wat "bench/s0/b4_cast.wat" :export "cast_depth_3"
+    :expect #(mod % 11)}
+   {:id "B4d4"
+    :what "ref.cast to a type at depth 4, one input type"
+    :wat "bench/s0/b4_cast.wat" :export "cast_depth_4"
+    :expect #(mod % 11)}
+   {:id "B4d5"
+    :what "ref.cast to a type at depth 5, one input type"
+    :wat "bench/s0/b4_cast.wat" :export "cast_depth_5"
+    :expect #(mod % 11)}
+   {:id "B4d6"
+    :what "ref.cast to a type at depth 6, one input type"
+    :wat "bench/s0/b4_cast.wat" :export "cast_depth_6"
+    :expect #(mod % 11)}
+   {:id "B4v1"
+    :what "ref.cast to depth 5, one input type — the variety axis, held at 1"
+    :wat "bench/s0/b4_cast.wat" :export "cast_variety_1"
+    :expect #(mod % 11)}
+   {:id "B4v10"
+    :what "ref.cast to depth 5, ten input types — the axis B2 questioned"
+    :wat "bench/s0/b4_cast.wat" :export "cast_variety_10"
     :expect #(mod % 11)}])
 
 ;; --- shelling out ----------------------------------------------------------

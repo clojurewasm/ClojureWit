@@ -114,7 +114,7 @@ and `.claude/skills/wat` asserted the opposite until it was measured.
 | ~~B5~~ | ~~guarded call-site specialisation~~ | **done** — both lanes pass, on a coverage condition |
 | ~~B7~~ | ~~the specialisation crossover~~ | **done** — ~26% wasmtime, ~80% V8; no single threshold fits both |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
-| B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph — B2 questions the axis |
+| ~~B4~~ | ~~`ref.cast` cost vs type-hierarchy depth~~ | **done** — depth is free; *width* and input variety are what cost |
 
 **B2 confirmed `0004`'s mechanism and not its conclusion.** Megamorphism costs
 wasmtime +9% against JVM Clojure's +114% — a vtable slot really has no cache to
@@ -123,13 +123,16 @@ unchanged. The surprise is V8: it degrades +122%, like the JVM, because winning
 B1 by speculating means having speculation to lose. Details in
 `doc/design/0002-*`.
 
-**Next: B3 and B4**, the two contracted S0 benchmarks still unwritten. B4's
-recorded prediction is aimed at hierarchy *depth*, and B2 raised the question of
-whether `ref.cast` cost is really about the variety of input types instead — so
-B4 should measure both axes, and amend the prediction's note if the axis was
-wrong.
+**B4 falsified its own prediction and `0004`'s guidance with it.** Depth costs
+nothing (3.669 → 3.698 ns from depth 2 to 5). What costs on wasmtime is casting
+to a type *that has subtypes* — 2.80 ns, against 0.09 for casting to the
+object's own leaf — and another 2.14 when ten input types reach one cast site.
+V8 shows none of it. So "keep the type graph shallow and wide" was backwards on
+both halves; the rule is **cast to leaves, keep the type set at a cast site
+small**, which is the same lever as call-site specialisation seen from the other
+side.
 
-Then, outside the original contract:
+**Next: B3**, the last contracted S0 benchmark. Then, outside the contract:
 
 - **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
   aggregate argument, unmeasured, and it is what "a Rust developer calls a
