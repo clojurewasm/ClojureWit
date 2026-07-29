@@ -15,5 +15,7 @@
 # it pins the wasmtime crate to the version in tools.json)
 dev/spike/rust_call_cost/target/
 
-# Build outputs that sit beside their tracked sources in dev/resources.
-dev/resources/*.wasm
+# A JVM that faults inside wasmtime drops one of these in the repository root.
+# That has happened twice: a null export index passed to get_func, and a
+# recursive walk sharing its out-parameters.
+hs_err_pid*.log
