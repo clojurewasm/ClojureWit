@@ -130,8 +130,12 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
 ## Verified
 
-- **A fresh clone from GitHub passes `bb check`** — including the test that
-  shells out to `wasm-tools`.
+- **A fresh clone passes `bb check` and reproduces every spike** — re-checked
+  2026-07-30 after S1 added ten WIT/WAT artifacts, two of them `deps/`
+  directories that git could have dropped: 29 tests, 212 assertions, 5.6 s,
+  and `spike-reflect`, `spike-import` and `spike-hres` all print what their
+  design notes quote. This is the constraint that has failed here before —
+  empty directories git never tracked.
 - **The benchmark driver fails on a wrong answer, not just a slow one**, and
   refuses an `n` whose expected value an empty loop would also produce. Both
   confirmed by breaking the benchmark on purpose.
