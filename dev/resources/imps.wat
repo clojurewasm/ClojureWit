@@ -1,0 +1,16 @@
+;; The guest half of dev/resources/imps.wit. A string result flattens to a
+;; return area the callee writes (ptr, len) into, in both directions.
+(module
+  (import "local:imps/host@0.1.0" "mk" (func $mk (param i32) (param i32)))
+  (memory (export "memory") 1)
+  (global $next (mut i32) (i32.const 1024))
+  (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+    (local $p i32)
+    (local.set $p (global.get $next))
+    (global.set $next (i32.add (local.get $p) (local.get 3)))
+    (local.get $p))
+  (func (export "run") (param $n i32) (result i32)
+    (call $mk (local.get $n) (i32.const 128))
+    (i32.store (i32.const 160) (i32.load (i32.const 128)))
+    (i32.store offset=4 (i32.const 160) (i32.load offset=4 (i32.const 128)))
+    (i32.const 160)))

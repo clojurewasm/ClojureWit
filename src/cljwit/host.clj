@@ -155,6 +155,13 @@
      :err-message   (b "wasmtime_error_message" nil ADDR ADDR)
      :err-delete    (b "wasmtime_error_delete" nil ADDR)
      :err-new       (b "wasmtime_error_new" ADDR ADDR)
+     ;; 0017 C: wasmtime frees what an import callback writes, so a string
+     ;; result cannot come from an Arena. libc's malloc is the allocator it
+     ;; expects, and this is the only place in the library that needs one.
+     :malloc        (let [seg ^MemorySegment (.orElseThrow (.find (.defaultLookup linker) "malloc"))]
+                      (.downcallHandle linker seg
+                                       (FunctionDescriptor/of ADDR (into-array java.lang.foreign.MemoryLayout [I64]))
+                                       (into-array java.lang.foreign.Linker$Option [])))
      :linker-root   (b "wasmtime_component_linker_root" ADDR ADDR)
      :li-add-inst   (b "wasmtime_component_linker_instance_add_instance" ADDR ADDR ADDR I64 ADDR)
      :li-add-func   (b "wasmtime_component_linker_instance_add_func" ADDR ADDR ADDR I64 ADDR ADDR ADDR)}))
@@ -549,15 +556,33 @@
 ;; `malloc` rather than from an Arena (0017 C), which is not built yet. Refusing
 ;; at instantiate with the kind named beats a wrong answer or a corrupt heap.
 (def ^:private IMPORTABLE
-  #{:bool :s8 :u8 :s16 :u16 :s32 :u32 :s64 :u64 :f32 :f64 :char})
+  #{:bool :s8 :u8 :s16 :u16 :s32 :u32 :s64 :u64 :f32 :f64 :char :string})
 
 (defn- import-stub
   "One FFM upcall stub for one host import. Lifts the arguments, calls `f`,
    lowers the result, and converts anything thrown into a wasmtime error --
    a JVM exception unwinding through native frames exits the VM (0017 D)."
   [api ^Arena arena sig f nm dead]
-  (let [lifts  (mapv (fn [[_ t]] (scalar-lift t)) (:params sig))
-        lower  (some-> (:result sig) scalar-lower)
+  (let [lifts  (mapv (fn [[_ t]] (if (= :string t)
+                                   (fn [^MemorySegment seg] (read-str seg UNION))
+                                   (scalar-lift t)))
+                     (:params sig))
+        rt     (:result sig)
+        lower  (cond
+                 (nil? rt) nil
+                 (= :string rt)
+                 (fn [_ ^MemorySegment seg ^String v]
+                   ;; malloc, not the arena: wasmtime takes ownership and frees.
+                   (let [b   (.getBytes v "UTF-8")
+                         n   (max 1 (alength b))
+                         buf ^MemorySegment (.reinterpret
+                                             ^MemorySegment (invoke (:malloc api) (long n))
+                                             (long n))]
+                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
+                     (.set seg I8 (long 0) (byte (VAL-KIND :string)))
+                     (.set seg I64 (long (+ UNION STR-SIZE)) (long (alength b)))
+                     (.set seg ADDR (long (+ UNION STR-DATA)) buf)))
+                 :else (scalar-lower rt))
         cb (reify ImportCallback
              (call [_ _data _ctx _ty args _n res _nres]
                (try

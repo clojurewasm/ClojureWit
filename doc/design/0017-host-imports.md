@@ -76,8 +76,10 @@ returning a pointer into static storage aborts with
 `POINTER_BEING_FREED_WAS_NOT_ALLOCATED` inside
 `wasmtime_component_linker_instance_add_func`'s closure.
 
-`host.clj`'s `lower-fn` allocates **every** payload from a
-`java.lang.foreign.Arena` — string bytes, list/tuple/record element buffers,
+**Confirmed here, and the shape of the failure is the finding.** With an Arena
+pointer, *one call succeeds*; 2000 abort the process (`rc=134`). A test that
+called once would have licensed the corruption. `host.clj`'s `lower-fn`
+allocates **every** payload from a `java.lang.foreign.Arena` — string bytes, list/tuple/record element buffers,
 flags name vectors, and the boxed vals behind `option`/`result`/`variant`.
 Handing wasmtime an Arena pointer to `free()` is heap corruption. The import
 direction needs `malloc` and `wasmtime_component_val_new`, so `lower-fn` needs

@@ -411,3 +411,31 @@
                   (is (= :instance-dead (:cljwit/error (ex-data ex)))
                       "and the next call says the instance is dead rather than reporting a trap"))))))
         (finally (.delete ^File f))))))
+
+(deftest host-imports-returning-a-string
+  ;; `0017` C: the two directions are not mirror images. wasmtime takes
+  ;; ownership of what an import callback writes and frees it, so a string
+  ;; result must come from `malloc`, not from an `Arena`.
+  ;;
+  ;; Measured, and the shape of the measurement is the point: with an Arena
+  ;; pointer **one call succeeds** and 2000 abort the process (rc=134). A test
+  ;; that called once would have licensed the corruption, which is why this one
+  ;; loops.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping string-import test")
+    (let [f (build-component! "imps")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (with-open [i (host/instantiate
+                           a {:imports {"local:imps/host@0.1.0#mk"
+                                        (fn [n] (apply str (repeat n "ab")))}})]
+              (testing "a string crosses in both directions within one call"
+                (is (= "ababab" ((i "run") 3)))
+                (is (= "" ((i "run") 0)))
+                (is (= "ab" ((i "run") 1))))
+              (testing "and keeps working, which is what an Arena pointer would not"
+                (is (every? (fn [n] (= (apply str (repeat n "ab")) ((i "run") n)))
+                            (map (fn [k] (inc (mod k 9))) (range 500)))
+                    "500 calls, each result freed by wasmtime")))))
+        (finally (.delete ^File f))))))

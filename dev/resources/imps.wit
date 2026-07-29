@@ -1,0 +1,5 @@
+// A host import that returns a string, which is where the two directions stop
+// being mirror images: wasmtime *frees* what the callback writes (`0017` C).
+package local:imps@0.1.0;
+interface host { mk: func(n: u32) -> string; }
+world w { import host; export run: func(n: u32) -> string; }
