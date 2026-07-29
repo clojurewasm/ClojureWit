@@ -49,7 +49,7 @@ gamed by slowing the baseline. The unoptimised build is the reference, because
 | | overhead, generic | overhead, specialised |
 |---|---|---|
 | V8 | 0.13 ns — passes | **0.00 ns** |
-| wasmtime | 6.08 ns — fails | **0.06 ns — passes** |
+| wasmtime | ~6.1 ns — fails | **0.06 ns — passes** |
 
 **B5 has run and both lanes pass — conditionally.** A guarded specialised site
 lands on the direct-call floor on both engines. But at a 2-in-11 hit rate
@@ -59,9 +59,12 @@ the analysis is wrong about is worse than leaving it alone.**
 So S0's answer is: **the design is viable to exactly the extent that
 whole-program analysis can tell those two cases apart.** That moves the coverage
 report in `doc/design/0004-*` from a nicety to the thing the stage rests on.
-**B7 then measured the crossover: ~26% hit rate on wasmtime, ~80% on V8** — so
-no single specialisation policy is right for both lanes, which is an S3
-decision. The stage's verdict is `doc/design/0010-*`.
+**B7 then measured the crossover: roughly 25% hit rate on wasmtime against 80%
+on V8** (±5 points; the 3× ratio is the robust part). A single conservative
+threshold at 80% never regresses either lane and still collects 5–6 ns per
+specialised site on wasmtime where it applies; per-lane builds buy back the
+rest at a cost `0009` constrains. Which trade to make is an S3 decision. The
+stage's verdict is `doc/design/0010-*`.
 
 ### S1 — `cljwit.host`: call Wasm from JVM Clojure (weeks)
 

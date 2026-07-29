@@ -7,16 +7,16 @@ _Short by design, and printed at every session start — so findings live in
 
 ## Next
 
-1. **Land `doc/design/0010-s0-verdict.md`** — S0's verdict, drafted and under
-   adversarial review, currently untracked. Landing it means propagating to
-   `doc/roadmap.md`, `doc/design/0004-*` and `bench/s0/README.md`, which still
-   describe S0 as in progress.
-2. **Record a B6 prediction in `doc/design/0002-*` before writing any of it.**
+1. **Record a B6 prediction in `doc/design/0002-*` before writing any of it.**
    B6 has no row in that table yet, and the table is the discipline.
-3. **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
+2. **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
    aggregate argument (`doc/design/0007-*`), which is what "a Rust developer
    calls a Clojure component" actually costs, and which no S0 benchmark
    touches. `doc/roadmap.md` places it at the head of S1.
+3. **Measure B7 at k = 1, 2, 4, 5.** The crossover is currently a linear
+   interpolation across a 27-point gap, over a generic control that humps ~20%
+   in the middle for reasons nobody has explained. If that hump is noise, the
+   wasmtime threshold moves from ~25% to ~41%. Ten lines per point.
 
 ## Where we are
 
@@ -35,9 +35,14 @@ ns per operation, against JVM Clojure:
 | boxed arithmetic (B3) | 2.98 | **0.93** (0.31×) | **0.91** (0.31×) |
 
 Generic dispatch fails the server lane by 6×; guarded specialisation erases it,
-and starts paying at ~26% hit rate on wasmtime against ~80% on V8. Boxed
-arithmetic wins outright on both. `ref.cast` is free by depth and expensive by
-width. `0004` lost four claims to these runs and carries the amendments.
+and starts paying at roughly 25% hit rate on wasmtime against 80% on V8 — the
+3× ratio is robust, the individual figures are ±5 points. Boxed arithmetic wins
+outright on both. `ref.cast` is free by depth and expensive by width. `0004` and
+`0003` both carry amendments for claims these runs falsified.
+
+**The verdict's condition is per-site guard precision, and what a compiler
+actually controls — coverage, how many sites the analysis can prove precise —
+is unmeasured.** That is S0's residue and it belongs to S3.
 
 ## Blocked / needs a decision from outside
 

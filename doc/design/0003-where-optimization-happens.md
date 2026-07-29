@@ -43,12 +43,26 @@ Optimizing Inline Caches"*. Its conclusion is that AOT should invest in static
 analysis, type inference, specialization, and offline profile data — not in
 imitating a JIT.
 
+> **Amendment, 2026-07-29 — S0 falsified this paragraph on the server lane.**
+> The reasoning above holds on V8, where a small target set is enough and
+> speculation does the rest. On wasmtime there is no speculation to fire, so a
+> small target set buys **nothing on its own**: B1 measures generic dispatch at
+> ~6.1 ns over a direct call and B5 shows the only thing that removes it is the
+> compiler emitting **its own guarded inline cache** — a `br_on_cast` plus a
+> direct call plus a fallback. That is close to the shape the cited paper argues
+> against, arrived at from the opposite direction: not to imitate a JIT, but
+> because there is no JIT to imitate. So **"L1's job is not to eliminate
+> indirect calls" is true on V8 and false on wasmtime**, where eliminating them
+> is the entire lever. The L1 row in the table above — "shaping call sites to
+> have few targets" — survives; the scoping sentence does not. See
+> `doc/design/0010-*`.
+
 ## The asymmetry that shapes the design
 
 | | browser (V8) | server (wasmtime) |
 |---|---|---|
 | adaptive optimization | yes | **no** |
-| inliner | yes | landed in v36, **off by default, still maturing** |
+| inliner | yes | exists (`-C inlining=y` on 47.0.1) and **changes B1 by 0.09 ns — inside the spread**, measured 2026-07-29 rather than inferred from release notes |
 | type feedback | yes | no |
 
 The same `.wasm` is treated very differently. **So L1 is designed as if only

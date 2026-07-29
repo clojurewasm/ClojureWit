@@ -39,8 +39,8 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | **confirmed, on both lanes, by 3.2×.** JVM 2.982; V8 0.927 and wasmtime 0.912, both **0.31×**. The first benchmark wasmtime wins. The overflow check is free (0.912 against 0.917 without it). |
 | B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | **falsified.** Depths 2, 3, 4 and 5 cost 3.669, 3.667, 3.672 and 3.698 ns on wasmtime — flat to within 1%. Depth is free; the prediction named the wrong axis, and so did the design guidance it supported. |
 | B4b | the axis B2 questioned: `ref.cast` cost vs *variety of input types*, depth held fixed | **recorded 2026-07-29, before the run, and it contradicts B4's own prediction above.** Both engines implement a cast as a constant-time supertype-array probe, so **neither depth nor variety should matter measurably**, and B4's original prediction is wrong. The 6.81-vs-2.33 gap in B2 that raised the question was confounded — it varied the ring *and* the callee — and I expect it to be the mixed ring's dispatch, not the cast. Falsified if either axis moves the number more than the run-to-run spread. | **half right.** Depth: flat, as predicted. Variety: **+2.14 ns on wasmtime** (3.718 → 5.860), so B2's lead was real and this prediction is falsified on that axis. On V8 neither moves anything (0.843 → 0.844). |
-| B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor — 0.06 ns, far better than the 1 ns predicted. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
-| B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover **~26% on wasmtime, ~80% on V8** — a 3× difference between lanes. |
+| B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor. That difference — 0.06 ns — is *below this benchmark's own resolution* (a re-run gives 0.15), so the honest statement is **indistinguishable from the direct-call floor**, which is what the 1 ns budget needs. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
+| B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover roughly **25% on wasmtime, 80% on V8**, ±5 points — the **3× ratio between lanes is the robust part** (a re-run reproduces 3.06× against 3.04×); the individual figures are not, for three reasons recorded below. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -75,7 +75,7 @@ control, so nothing below turns on a difference smaller than that.
    as it stood at the time — ~10× JVM Clojure — both lanes passed at 5.6×
    worst. That bar was withdrawn on 2026-07-29 for being unable to
    discriminate, and under its replacement (dispatch overhead under 1 ns,
-   absolute, per lane) V8 passes at 0.13 and wasmtime fails at 6.08. See
+   absolute, per lane) V8 passes at 0.13 and wasmtime fails at ~6.1. See
    `doc/roadmap.md`.
 2. **On V8 the dispatch is free** — 0.13 ns over the direct-call control across
    all three levels, and V8 still beats JVM Clojure outright. Speculative
@@ -192,9 +192,14 @@ generic dispatch failed on the server by 6×.
 vtable path taken anyway. Specialising a site the analysis is wrong about is
 more expensive than leaving it generic.
 
-**3. So S0's answer is conditional on coverage, and `0004`'s coverage report
-stops being a nicety.** The design is viable exactly to the extent that
-whole-program analysis can tell the two cases apart. Where the crossover sits —
+**3. So S0's answer is conditional on per-site guard *precision*, and `0004`'s
+coverage report stops being a nicety.** Two quantities get conflated here and
+should not be: B5 and B7 measure **hit rate** — what fraction of dynamic
+executions at one site the guard wins — while **coverage**, what fraction of
+call sites the analysis can prove precise enough to specialise at all, is what
+a compiler controls and is unmeasured. A 0-CFA target set does not carry a hit
+rate. The design is viable exactly to the extent that analysis can bridge
+those, and nothing here says it can. Where the crossover sits —
 the hit rate at which specialisation stops paying — is **not measured**: the two
 rows above walk different rings, so they cannot be interpolated. That needs
 rings of varying type mix and is the next thing to measure.
@@ -235,8 +240,30 @@ monotonic in hit rate on both lanes — no hump in the middle — and the *worst
 point is 0% hit, where the branch is perfectly predictable. So the guard's cost
 is the test plus taking the slow path anyway, not misprediction.
 
-**2. The crossover is ~26% on wasmtime and ~80% on V8.** By interpolation:
-wasmtime turns profitable just under 3-in-11, V8 not until nearly 9-in-11.
+**2. The crossover is roughly 25% on wasmtime and 80% on V8 — ±5 points, and
+softer than two figures imply.** By interpolation wasmtime turns profitable just
+under 3-in-11 and V8 not until nearly 9-in-11; a re-run at n=4M gave 24.8% and
+76.0%. Three caveats, all of which make the figures softer:
+
+- **V8's rests on an endpoint of −0.01 ns**, which is inside V8's own spread.
+  The 9/11 point cannot be told apart from the crossover itself, so the data
+  bounds V8's crossover only to somewhere around 70–90%.
+- **The interpolation spans 27 percentage points with no intermediate point**,
+  over a guarded curve whose per-node slope varies by 60%.
+- **The generic control is not flat.** It humps ~20% in the middle
+  (8.51 → 10.12 → 10.31 → 9.24 → 8.50) for reasons nobody has explained, and
+  the wasmtime crossover sits inside the steepest part of it. **If that hump is
+  measurement rather than signal, the wasmtime crossover moves to ~41%** — a
+  1.6× swing on the central number.
+
+Measuring k = 1, 2, 4, 5 would settle all three and costs ten lines per point.
+
+**An unexplained anomaly under the threshold, recorded rather than smoothed
+over:** B7's generic path on a *two-type* ring costs 10.12 ns at 3/11, while
+B2's generic path on a *ten-type* ring costs 9.22. Bimorphic dispatch measuring
+~10% slower than megamorphic, reproducibly, in the same module. That number is
+the numerator of the crossover subtraction and nothing accounts for it.
+
 **A compiler tuned to one lane makes the wrong call on the other** — at a 50%
 site, specialising wins 3 ns on wasmtime and loses 0.2 ns on V8.
 

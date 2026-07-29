@@ -13,7 +13,7 @@
 > already proposes elsewhere: make the target statically known. Nothing below is
 > retracted and the shape is unchanged. The S0 stop condition has since been
 > rewritten (`doc/roadmap.md`, 2026-07-29) and under it **the server lane
-> fails**: 6.08 ns of dispatch overhead against a 1 ns budget. V8 passes at
+> fails**: ~6.1 ns of dispatch overhead against a 1 ns budget. V8 passes at
 > 0.13.
 > B2 has since run and is summarised below. See `doc/design/0002-measure-first.md`.
 
@@ -140,7 +140,7 @@ B1 showing protocol dispatch far off JVM parity. See
 **B1 has run.** It did not falsify the design's shape, and it did falsify this
 note's account of *where the cost is* (amendment above). Under the stop
 condition as rewritten on 2026-07-29 it also **fails on the server lane** —
-6.08 ns of overhead against a 1 ns budget — which is not a refutation of the
+~6.1 ns of overhead against a 1 ns budget — which is not a refutation of the
 design but a statement that its remaining lever is now load-bearing rather than
 optional.
 
