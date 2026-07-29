@@ -1,0 +1,10 @@
+// A component that imports a *resource* from the host, which is what every
+// wasi:io interface does and what a map keyed `iface#func` cannot express
+// (`0017` F).
+package local:hres@0.1.0;
+interface host {
+  resource token { }
+  mint: func(v: u32) -> token;
+  peek: func(t: borrow<token>) -> u32;
+}
+world w { import host; export run: func(v: u32) -> u32; }

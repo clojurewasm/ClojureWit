@@ -169,6 +169,21 @@ shape, and handles minted per call. `resource_host_to_any` is how one becomes
 a val — and it panics outside a call scope, which is the landmine already
 recorded above.
 
+**Tried, 2026-07-30, and it does not work yet.**
+`dev/cljwit/spike/host_resource.clj` drives
+`dev/resources/hres.{wit,wat}` — a guest that mints a host resource, reads it
+through a `borrow`, and drops it. Every individual piece succeeds:
+`add_resource`, both `add_func`s and `instantiate`; `mint` with
+`host_to_any` returning no error; `peek` with `any_to_host` returning the right
+rep; and the destructor upcall firing with that rep. **The crash is inside
+`wasmtime_component_func_call` itself, after the destructor and before it
+returns**, in `error::source`.
+
+Leading suspect: ownership of the `any` that `host_to_any` produces. The spike
+writes it into the result val *and* deletes the `host_t` it came from, and
+nothing has established which of those wasmtime expects. The spike is not a
+`bb` task, because a task that aborts the JVM is worse than none.
+
 ## Alternatives rejected
 
 - **Imports on the artifact, sharing one set of host functions.** Wrong the
