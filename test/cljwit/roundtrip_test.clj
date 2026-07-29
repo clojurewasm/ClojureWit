@@ -39,7 +39,13 @@
 (def ^:private VAL 32)
 (def ^:private UNION 8)
 (def ^:private KIND {:bool 0 :u32 6 :u64 8 :s32 5 :f32 9 :f64 10 :char 11
-                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18 :result 19})
+                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18 :result 19 :variant 16})
+
+;; wasmtime_component_valvariant_t is {wasm_name_t discriminant; val *val;} —
+;; the name occupies the first sixteen bytes of the union, the payload pointer
+;; the eight after.
+(def ^:private VAR-NAME 8)
+(def ^:private VAR-VAL 24)
 
 ;; wasmtime_component_valresult_t is {bool is_ok; val *val;} — measured, so
 ;; is_ok is one byte at the union offset and the pointer is eight past it.
@@ -212,6 +218,25 @@
                 (.set inner ADDR (long (+ UNION STR-DATA)) buf)))
             (.set args I8 (long RES-OK) (byte (if (= :ok tag) 1 0)))
             (.set args ADDR (long RES-VAL) inner))
+          ;; [:case-name payload] / [:case-name] — the host hands back a case
+          ;; *name*, so a keyword is the natural reading, exactly as for enum.
+          :variant
+          (let [[tag payload] v
+                b   (.getBytes ^String (name tag) "UTF-8")
+                buf ^MemorySegment (.allocate arena (long (alength b)))]
+            (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
+            (.set args I64 (long (+ VAR-NAME STR-SIZE)) (long (alength b)))
+            (.set args ADDR (long (+ VAR-NAME STR-DATA)) buf)
+            (.set args ADDR (long VAR-VAL)
+                  (if (nil? payload)
+                    MemorySegment/NULL
+                    (let [iv ^MemorySegment (.allocate arena (long VAL))]
+                      (if (= :circle tag)
+                        (do (.set iv I8 (long 0) (byte (KIND :f64)))
+                            (.set iv F64 (long UNION) (double payload)))
+                        (do (.set iv I8 (long 0) (byte (KIND :u32)))
+                            (.set iv I32 (long UNION) (unchecked-int payload))))
+                      iv))))
           :string (let [b   (.getBytes ^String v "UTF-8")
                         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
@@ -259,6 +284,21 @@
                     b (byte-array n)]
                 (MemorySegment/copy (.reinterpret d n) I8 0 b 0 (int n))
                 [:err (String. b "UTF-8")])))
+          :variant
+          (let [n   (.get res I64 (long (+ VAR-NAME STR-SIZE)))
+                d   ^MemorySegment (.get res ADDR (long (+ VAR-NAME STR-DATA)))
+                b   (byte-array n)
+                _   (MemorySegment/copy (.reinterpret d n) I8 0 b 0 (int n))
+                tag (keyword (String. b "UTF-8"))
+                p   ^MemorySegment (.get res ADDR (long VAR-VAL))]
+            (if (.equals MemorySegment/NULL p)
+              [tag]
+              (let [pv (.reinterpret p VAL)]
+                ;; the payload carries its own kind, so the case does not have
+                ;; to be known here
+                [tag (if (= (KIND :f64) (.get pv I8 (long 0)))
+                       (.get pv F64 (long UNION))
+                       (bit-and (long (.get pv I32 (long UNION))) 0xFFFFFFFF))])))
           :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
                         p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
                         b (byte-array n)]
@@ -422,6 +462,17 @@
         ;; place and cannot.
         (is (= [:err "boom"] (echo "echo-result" :result [:err "boom"]))
             "an err is an ordinary value here, not an exception")))))
+
+(deftest variants-round-trip
+  (with-echo
+    (fn [echo]
+      (testing "0012 maps a variant to [:case payload], or [:case] with none"
+        (doseq [v [[:circle 1.5] [:circle 0.0] [:square 9] [:square 4294967295] [:point]]]
+          (is (= v (echo "echo-shape" :variant v)) (str "shape " (pr-str v)))))
+      (testing "the case comes back as a name, not an ordinal"
+        ;; Same as enum: the host union holds a wasm_name_t, so the keyword is
+        ;; the representation read straight rather than a Clojure-side choice.
+        (is (= :point (first (echo "echo-shape" :variant [:point]))))))))
 
 (deftest char-boundaries
   (with-echo

@@ -33,4 +33,10 @@ world echo {
   /// ([:ok v] / [:err e]) and throwing is return-position sugar. This checks
   /// that the tagged form round-trips, which the sugar is defined in terms of.
   export echo-result: func(v: result<u32, string>) -> result<u32, string>;
+
+  /// The host gives a variant as a case *name* plus an optional payload, which
+  /// is why 0012 maps it to [:case-name value] — and [:case-name] when there
+  /// is none.
+  variant shape { circle(f64), square(u32), point }
+  export echo-shape: func(v: shape) -> shape;
 }
