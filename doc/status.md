@@ -7,50 +7,6 @@ _Short by design, and printed at every session start — so findings live in
 
 ## Next
 
-**The calling convention is decided and the cost structure is measured**
-(`0011`, corrected by `0013`): `MethodHandleProxies/asInterfaceInstance` behind
-a `definterface` gives a static call site at **7.4 ns** against
-`invokeWithArguments`' 396, so **`cljwit.host` can be pure Clojure** — no
-bytecode generation, no C shim needed for the *binding*. A scalar component
-call costs **~0.39 µs**, and every lane has a control on the other side of the
-boundary:
-
-| entry point | Rust | C | JVM/FFM |
-|---|---:|---:|---:|
-| core, typed / `func_call_unchecked` | 15.2 | 15.7 | 46.1 |
-| core, untyped `Val` / `func_call` | 58.7 | 74.1 | 102.5 |
-| component, typed | 279.4 | *none* | *none* |
-| component, untyped `Val` | 309.4 | 352.9 | 392.8 |
-
-- **wasmtime's floor is 15 ns**, agreed to 2% by Rust and C independently.
-- **The JVM adds a flat ~27–31 ns**, not a multiple. The binding is not worth
-  optimising, which `0011` had right for the wrong reason.
-- **The Component Model is ~79% of a component call** — 4.8× a core call
-  measured entirely within C, not the ~20% `0011` claimed. **Typing it back
-  recovers only ~10%**, so the cost is the Canonical ABI, not the `Val` boxing.
-  279 ns is the floor with the best API wasmtime offers, against 15 ns for a
-  core call.
-- **`wasmtime_func_call_unchecked` *is* the fast path** — 2.2× faster from the
-  JVM, 4.9× from C, exactly as its header says. `0011`'s "1.7–3.0× slower" was
-  an artifact.
-- **`wasmtime_component_func_post_return` is deprecated and a no-op** in 47.0.1.
-
-A Rust shim would buy ~10–20% and is closed as a speed argument (`0013`); the
-segfault-safety argument for one is separate and still open. **Against B6 this inverts the
-emphasis: for payloads under ~30 KB the call dominates the copy.**
-
-**S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
-component and calls it from the JVM through FFM — engine, store, component,
-linker, instantiate, export lookup, call — returning 42. The flake now exports
-`CLJWIT_WASMTIME_LIB` so no committed file carries a machine-specific path;
-how a *shipped* library finds the shared object is still open.
-
-Behind that (`0005`, surveyed 2026-07-30): wasmtime's C API
-gained the component model between v40 and v43 — 0 exported
-`wasmtime_component_*` symbols at 40.0.2, 154 at the pinned 47.0.1 — and the
-JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
-minimum, set for WASI 0.3, is also the component minimum; do not lower it.
-
 1. **`own`/`borrow` — resource handles.** `flags` and `tuple` now marshal, so
    6 of `dev/resources/zoo.wit`'s 8 exports are callable and the four that are
    not are all resource methods. `0012` has no accepted Clojure representation
@@ -100,6 +56,63 @@ outright on both. `ref.cast` is free by depth and expensive by width. `0004` and
 **The verdict's condition is per-site guard precision, and what a compiler
 actually controls — coverage, how many sites the analysis can prove precise —
 is unmeasured.** That is S0's residue and it belongs to S3.
+
+### S1 — reaching a component
+
+**`cljwit.host` exists** (`src/cljwit/host.clj`, `0014`). Three lifetimes —
+engine, compiled artifact, instance — with exports discovered from the
+component itself: no WIT file and no code generation at run time. Names are the
+exact WIT strings, including `pkg:name/iface@ver#func` for functions inside an
+interface, with keyword aliases only where the name reads back equal to itself.
+Every entry into a store takes a non-concurrency check, and results are lifted
+eagerly. It marshals every `0012` row except `own`/`borrow`, `map`,
+`list<T,N>`, `stream`/`future` and `error-context`.
+
+**The calling convention is decided and the cost structure is measured**
+(`0011`, corrected by `0013`): `MethodHandleProxies/asInterfaceInstance` behind
+a `definterface` gives a static call site at **7.4 ns** against
+`invokeWithArguments`' 396, so **`cljwit.host` can be pure Clojure** — no
+bytecode generation, no C shim needed for the *binding*. A scalar component
+call costs **~0.39 µs**, and every lane has a control on the other side of the
+boundary:
+
+| entry point | Rust | C | JVM/FFM |
+|---|---:|---:|---:|
+| core, typed / `func_call_unchecked` | 15.2 | 15.7 | 46.1 |
+| core, untyped `Val` / `func_call` | 58.7 | 74.1 | 102.5 |
+| component, typed | 279.4 | *none* | *none* |
+| component, untyped `Val` | 309.4 | 352.9 | 392.8 |
+
+- **wasmtime's floor is 15 ns**, agreed to 2% by Rust and C independently.
+- **The JVM adds a flat ~27–31 ns**, not a multiple. The binding is not worth
+  optimising, which `0011` had right for the wrong reason.
+- **The Component Model is ~79% of a component call** — 4.8× a core call
+  measured entirely within C, not the ~20% `0011` claimed. **Typing it back
+  recovers only ~10%**, so the cost is the Canonical ABI, not the `Val` boxing.
+  279 ns is the floor with the best API wasmtime offers, against 15 ns for a
+  core call.
+- **`wasmtime_func_call_unchecked` *is* the fast path** — 2.2× faster from the
+  JVM, 4.9× from C, exactly as its header says. `0011`'s "1.7–3.0× slower" was
+  an artifact.
+- **`wasmtime_component_func_post_return` is deprecated and a no-op** in 47.0.1.
+
+A Rust shim would buy ~10–20% and is closed as a speed argument (`0013`); the
+segfault-safety argument for one is separate and still open.
+
+**Against B6 this inverts the emphasis:** for payloads under ~30 KB the call
+dominates the copy.
+
+**S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
+component and calls it from the JVM through FFM — engine, store, component,
+linker, instantiate, export lookup, call — returning 42. The flake now exports
+`CLJWIT_WASMTIME_LIB` so no committed file carries a machine-specific path;
+how a *shipped* library finds the shared object is still open.
+
+Behind that (`0005`, surveyed 2026-07-30): wasmtime's C API
+gained the component model between v40 and v43 — 0 exported
+`wasmtime_component_*` symbols at 40.0.2, 154 at the pinned 47.0.1 — and the
+JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
+minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
 ## Blocked / needs a decision from outside
 
