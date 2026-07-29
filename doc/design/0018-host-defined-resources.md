@@ -1,113 +1,136 @@
 # 0018 — Host-defined resources in `cljwit.host`
 
-**Status:** proposed · 2026-07-30 · the mechanism is `bb spike-hres`; this is
-the API over it, and no code exists
+**Status:** deferred · 2026-07-30 · the first draft proposed an API; an
+adversarial review falsified the fact it called settled and showed two of its
+decisions turn on a question `0017` A has already argued should be reopened.
+What the review established is recorded here, because it is most of the work.
 
 ## The question
 
 `0017` A keys imports by `iface#func`. A **resource is a type, not a
 function**, so that map has nowhere to put one — and every `wasi:io` interface
-declares one, so this is not an edge case.
+declares one.
 
-What is settled, measured 2026-07-30:
-
-- **The round trip works** (`bb spike-hres`): a guest mints a host resource,
-  reads it through a `borrow`, and drops it; the host's destructor fires with
-  the right rep.
-- **A host resource is a `u32` type tag plus a destructor upcall**, and the
-  destructor returns `wasmtime_error_t *`, not `void`. Getting that wrong
-  crashes the JVM *after* the callback has run correctly.
-- **A handle carries only a `u32` rep.** `resource_host_new(owned, rep, ty)`
-  mints one; `any_to_host` + `host_rep` reads it back. There is nowhere to put
-  a Clojure value, so the host must keep the mapping.
-- **The marshaller can tell a host resource from a guest one by type.** A
-  valtype's union carries `own`/`borrow` → `resource_type_t *`, and
-  `resource_type_equal` compares it against the types the host registered.
+`bb spike-hres` proves the mechanism: a guest mints a host resource, reads it
+through a `borrow`, and drops it, and the destructor fires with the right rep.
+The API over it is what is deferred.
 
 ## The decision
 
-### A. Resources are declared in their own map, keyed by the same WIT name
+**Do not design this yet. Settle whether the linker is per-instantiate or
+engine-scoped first** (`0017` A), because it determines the rep table's scope,
+how a destructor knows which instance it is dropping for, and whether a store
+data pointer is needed. Writing the API now means writing it against a shape
+that has already been argued should change.
 
-```clojure
-(host/instantiate
-  art {:resources {"local:hres/host@0.1.0#token" {:drop (fn [v] (close! v))}}
-       :imports   {"local:hres/host@0.1.0#mint" (fn [v] (open-thing v))
-                   "local:hres/host@0.1.0#peek" (fn [t] (:n t))}})
+`wasmtime_component_linker_instance_add_resource` costs one upcall stub per
+resource type per instantiate — 7 µs warm, 30–160 µs cold against `0014` C's
+20 µs instantiate — so a handful of host resource types roughly triples
+instantiation in the per-request shape `0014` C is built around. That is the
+same question, not a separate one.
+
+## What the review established, and what it cost the first draft
+
+### The reflection-time discriminator does not exist
+
+The draft called this settled: *"a valtype's union carries `own`/`borrow` →
+`resource_type_t *`, and `resource_type_equal` compares it against the types
+the host registered."* Measured, on this repo's own `hres` component:
+
+```
+resource item token       == resource_type_new_host(7)?  0
+func mint result own      == resource_type_new_host(7)?  0
 ```
 
-The identity stays the exact WIT name (`0014` B, `0017` A). What changes is
-that a resource is a different *kind* of thing, so it gets a different key in
-the options map rather than a different value shape under the same one.
+**Nothing reflected from a component ever compares equal to a host-registered
+type.** What does compare equal is the component's own import items — a
+`mint` result matches the interface's `token` item — which is a different
+mechanism, and it maps names to types rather than types to tags. At *runtime*,
+`resource_any_type(any)` does return the registered tag, but `0014` A builds
+marshallers once from the reflected type; a per-value type comparison is a
+different design with a per-value allocate/compare/delete cost.
 
-### B. A host resource is any Clojure value; the host owns the rep table
+Two traps in the same area, both measured:
 
-The import that returns one returns an ordinary value. `cljwit.host` assigns it
-a `u32` rep, keeps `rep → value` for the instance, and mints the handle. A
-`borrow` parameter of that type arrives as the value, not as a rep or a handle.
+- **Type identity is per-component-load, and the pointers are reused.**
+  Distinct types printed the same `resource_type_t *` address while comparing
+  unequal, and a second load of the same file produced a type unequal to the
+  first load's. Anything keying a map by the pointer maps every host resource
+  to whichever it read last.
+- **A `use`d resource is one type under many names.** In a component where one
+  interface `use`s another's resource, both names denote one type — and the
+  same name can denote *two* types (the imported one and the exported one).
+  `wasi:io/streams` `use`s `pollable` from `wasi:io/poll`, and
+  `wasi:filesystem`, `wasi:sockets` and `wasi:http` all `use` the stream types,
+  so keying `:resources` by "the exact WIT name" does not determine which key
+  the user must write.
 
-The guest's drop removes the entry and calls `:drop` with the value, if given.
+### An `own` parameter leaks, and the header says why
 
-### C. The table is per-instance and dies with it
+The draft's only removal rule was "the guest's drop removes the entry". When a
+guest hands a host resource *back* — `eat: func(t: token) -> u32` — there is no
+guest drop, ever. Measured: `dtor calls=0, table entries=1` after the call.
 
-Reps are only meaningful inside one store. The table lives beside the handle
-registry `0016` D already keeps, and `Instance/close` clears it — after
-closing outstanding guest handles, before deleting the store.
+`wasmtime/component/val.h`: *"unlike `wasmtime_component_resource_any_t` host
+resources do not have a 'drop' operation. It's up to the host to define what it
+means to drop an owned resource and handle that appropriately."*
 
-### D. `:drop` may not throw
+So for `wasi:io`-shaped interfaces — where the value is a file or a socket —
+the draft would leak one OS handle per transfer. And it made the leak
+undiagnosable: the Clojure function was to receive "the value" for both
+`borrow` and `own`, so it could not tell it had just been handed ownership.
+The information is there and static: `own` is valtype kind 21, `borrow` 22.
 
-It runs inside wasmtime's destructor trampoline, which is the same place `0017`
-D's rule applies: a JVM exception unwinding through native frames exits the VM.
-Anything thrown is caught and converted, and the instance is marked dead, as an
-import's exception already is.
+### `store_delete` runs no destructors
 
-## Why
+The draft said the table "dies with" the instance. Measured: deleting the store
+leaves `dtor calls=0` with an entry outstanding. So every host resource the
+guest still holds at teardown — the normal case for a component that trapped —
+would be dropped on the floor. `Instance/close` must **run** `:drop` over the
+survivors, which is the mirror of `0016` D that the draft cited without
+copying.
 
-**A, because a resource is not a function and pretending otherwise costs
-later.** `0017` F recorded the shape; the alternative — one map whose values
-are sometimes functions and sometimes maps — makes a typo in the value shape
-into a silent misregistration.
+### D survives, and its alternatives list was wrong
 
-**B, because the rep is a `u32` and nothing else fits through it.** Any design
-where the Clojure value crosses the boundary is impossible; the only question
-is who keeps the table, and the host is the only party that sees both sides.
+A destructor returning an error does reach the caller with its message and does
+poison the store, exactly as `0017` D found for imports — so "mark the instance
+dead" is right. But the draft's only rejected alternative was "letting `:drop`
+propagate", which is impossible and therefore not an alternative. The real
+choice is between converting to a wasmtime error — which destroys an otherwise
+healthy instance because one `close!` failed — and catching, recording on the
+instance, and returning `NULL`, so the guest's drop succeeds and the failure
+surfaces where a user can see it.
 
-**D, because the failure is the worst one available**, and it is the same
-failure `0017` D already pays a `try` to prevent.
+### Two falsifiers deleted, because they do not fire
 
-## Alternatives rejected
+- **A `borrow` held across two guest calls works.** The guest stashed a handle
+  and borrowed it on later calls; the rep resolved both times and the eventual
+  drop fired correctly.
+- **Distinct host types are distinct.** `resource_type_equal(host(7), host(8))`
+  is 0, and a guest passing the wrong resource never reaches the host — wasmtime
+  refuses with `handle index used with the wrong type`. (Its message says
+  "guest-defined" for two host-defined resources, which is worth remembering
+  next to `0016`'s lesson about trusting error text.)
 
-- **One `:imports` map with a value shape that says "resource".** See A.
-- **Exposing the rep to Clojure.** Smallest, and it makes a capability an
-  integer anyone can forge — the same argument `0016` A made against integer
-  handles for guest resources.
-- **A global rep table.** Reps are store-scoped; a global one would collide
-  between instances and leak.
-- **Letting `:drop` propagate.** It cannot: the frame it would unwind through
-  is native.
-- **Requiring the user to mint handles explicitly**, with a `host/resource`
-  constructor called inside the import. Honest about what happens, and it
-  makes every `wasi:io`-shaped import carry ceremony that the type already
-  determines.
+### Value-as-identity is not injective
 
-## What would falsify this
+The draft made the Clojure value the resource. Two `mint` calls returning the
+same object — a cached connection, an interned keyword, `nil` — get two reps
+and one value, and two guest drops call `:drop` twice on it. `0016` A's own
+argument against integer handles applies here and the draft did not answer it.
 
-- **A resource type used by two instances of the same artifact.** The type is
-  registered on the *linker*, which `0014` C creates per instantiate, so each
-  instance has its own — unverified, and if linkers turn out shareable the
-  table's scope is wrong.
-- **`borrow` parameters of a host type arriving as something other than a
-  handle to a live rep** — the spike read one, but only inside the call that
-  minted it. A borrow held across two guest calls is untested.
-- **The type comparison being too coarse.** `resource_type_equal` is the only
-  discriminator; if two distinct host types compare equal, values would be
-  handed to the wrong `:drop`.
-- **`own` parameters** — a guest handing a host resource *back*. The spike only
-  covers the guest receiving one.
-- **The cost.** A rep table lookup per borrow and a `swap!` per mint, on a call
-  that `0013` prices at ~0.4 µs. Unmeasured.
+## What the next attempt has to decide
+
+1. Linker scope, first (`0017` A) — it fixes the table's scope and the
+   destructor's routing.
+2. Removal on `own` transfer, since the guest will never drop it.
+3. Running `:drop` at instance close rather than clearing.
+4. How a resource type is named, given that `use` makes names many-to-one and
+   one name ambiguous.
+5. Whether identity is the value or a host-minted token.
 
 ## Resources
 
 - `bb spike-hres` and `dev/resources/hres.{wit,wat}` — the mechanism.
-- `0017` — the import API this extends, and the exception rule D inherits.
-- `0016` — the guest-resource side, and the argument against integer handles.
+- `0017` A — the linker question this waits on.
+- `0016` D — the close rule this has to mirror.
