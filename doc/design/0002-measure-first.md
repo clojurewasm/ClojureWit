@@ -431,9 +431,11 @@ entirely.
   needs several guards or a switch, and nothing here says what the second and
   third cost. The 0.06 ns result is the best case by construction.
 - **B6 measures throughput on a 4 KB payload, not per-call cost.** Real WIT
-  arguments are often tens of bytes, where a fixed per-call constant — which
-  nothing here isolates — would dominate instead. The ~10× ratio is a
-  large-payload statement.
+  arguments are often tens of bytes, where a fixed per-call constant would
+  dominate instead. **That constant was measured on 2026-07-30 and is ~2.5 µs**
+  (`doc/design/0011-*`), which is 7× what moving 4 KB costs — so for any payload
+  under roughly 30 KB the *call* dominates the copy, and B6's ~10× ratio is a
+  large-payload statement in the strong sense.
 - **B6's copies are hot and aligned.** Both buffers stay resident across
   20,011 iterations, so nothing here prices a cold destination or the
   `cabi_realloc` call that a real lowering makes first.

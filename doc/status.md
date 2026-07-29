@@ -7,6 +7,15 @@ _Short by design, and printed at every session start — so findings live in
 
 ## Next
 
+**The calling convention is decided and the cost structure is measured**
+(`0011`): `MethodHandleProxies/asInterfaceInstance` behind a `definterface`
+gives a static call site at **6.2 ns** against `invokeWithArguments`' 400, so
+**`cljwit.host` can be pure Clojure** — no bytecode generation, no C shim. But
+a scalar component call costs **2471 ns**, so that boxing was only ~16% of it.
+The C API offers only the dynamic call path; there is no typed equivalent of
+the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
+payloads under ~30 KB the call dominates the copy.**
+
 **S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
 component and calls it from the JVM through FFM — engine, store, component,
 linker, instantiate, export lookup, call — returning 42. The flake now exports
@@ -19,12 +28,15 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Decide how `cljwit.host` makes its calls** — `0011`'s open question and
-   the one that decides whether the library can be pure Clojure. Clojure cannot
-   reach `MethodHandle.invokeExact`, so the spike boxes every argument through
-   `invokeWithArguments`. Measure that cost before designing the API around it;
-   the alternatives are emitting bytecode with static call sites, or a C shim.
-2. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+1. **Decide whether ~2.5 µs per component call is acceptable for what
+   `cljwit.host` is for** — and if not, which lever. A typed path does not
+   exist in the C API; the alternatives are a Rust shim exposing one, or an API
+   that batches. This is a product question as much as a technical one and it
+   should be settled before the API hardens.
+2. **Design `cljwit.host`'s API**, now that the calling convention is decided
+   (interface proxies, pure Clojure) and the cost structure is known
+   (per-call-dominated, not per-byte).
+3. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.

@@ -31,11 +31,10 @@ statically, which Clojure's reflective interop cannot express. It fails with
 `No matching field found: invokeExact`. `invokeWithArguments` works and is what
 the spike uses — **at the cost of boxing every argument and return**.
 
-This is the largest open design question for `cljwit.host`. A host that makes
-one call per user call pays that boxing on every crossing, on top of B6's
-~10× copy cost for aggregates. The way out is emitting bytecode with a static
-call site rather than reflecting, which is a real piece of work and should be
-decided with a measurement rather than by taste.
+This looked like the largest open design question for `cljwit.host` — and the
+measurement below says it is not. The way out is not bytecode generation: an
+interface proxy gets a static call site from pure Clojure, and in any case the
+boxing is ~16% of a component call rather than the bulk of it.
 
 **2. `Arena.allocateFrom` is unreachable reflectively.** It is declared on
 `SegmentAllocator`, and Clojure resolves against the concrete
@@ -53,6 +52,71 @@ exception — and a segfault takes the JVM with it.
 
 **4. `--enable-native-access` is required**, or the JVM warns and will
 eventually refuse. `bb spike-host` passes it.
+
+## The open question, with a prediction recorded before measuring
+
+**2026-07-30, before the run.** Constraint (1) says the spike boxes. Whether
+that matters depends on two numbers nobody has: what boxing costs per call, and
+what a component call costs in total.
+
+There is also a third option neither this note nor `0005` considered:
+`MethodHandleProxies/asInterfaceInstance` wraps a `MethodHandle` behind a
+single-method interface, and the interface's method *is* a static call site. A
+`definterface` supplies that interface from pure Clojure, so **if it is fast,
+`cljwit.host` can stay pure Clojure with no bytecode generation and no C shim.**
+
+Predicted: `invokeWithArguments` **~50–150 ns** per trivial native call
+(boxing plus a generic path); the proxy **within a few ns of a direct call**,
+because the JIT can see through it; and a real scalar
+`wasmtime_component_func_call` **~200–1000 ns**, which would make the boxing
+10–40% of a component call — significant but not fatal. **Falsified if the
+proxy is no better than `invokeWithArguments`**, in which case pure Clojure has
+no fast path and the choice is bytecode or C. *(Result below: the proxy is 63×
+better, and both other predictions were too optimistic by 2.5× or more.)*
+
+## Measured 2026-07-30 — and the prediction was wrong in the direction that matters
+
+`bb spike-overhead`, median of 21 runs, Apple M4 Pro, pinned toolchain:
+
+| | ns per call |
+|---|---|
+| `invokeWithArguments`, trivial native call | **400** |
+| **interface proxy**, same call | **6.2** |
+| component call `add(s32,s32) -> s32` | **2471** |
+| …with `post_return` | 3126 |
+
+**1. Pure Clojure has a fast path, and it is 63× the reflective one.**
+`MethodHandleProxies/asInterfaceInstance` behind a `definterface` gives a
+static call site at **6.2 ns**, against 400 for `invokeWithArguments`. So
+constraint (1) above does **not** force bytecode generation or a C shim, which
+is what it looked like before anyone measured. `cljwit.host` can be pure
+Clojure.
+
+**2. But that is not where the time goes.** A scalar component call costs
+**2471 ns** — the prediction said 200–1000 — so the 400 ns of boxing is about
+**16%** of it. Removing the boxing entirely buys a sixth. The dominant cost is
+wasmtime's component call itself.
+
+**3. And that cost is structural, not a mistake in the spike.** Omitting
+`post_return` was the obvious suspect; adding it makes the number *worse* by
+roughly one more `invokeWithArguments`, so the call was never missing it. The
+real reason is that **the C API offers only the dynamic path**:
+`wasmtime_component_func_call` takes `wasmtime_component_val_t*` and there is
+no typed equivalent — the core-module API has `wasmtime_func_call_unchecked`,
+the component API has nothing like it. Checked against the pinned headers.
+
+**4. Against B6, this inverts the emphasis.** B6 measured a 4 KB aggregate
+crossing at 339 ns and flagged that it had not isolated a per-call constant.
+That constant is ~2.5 µs. **For any payload under roughly 30 KB, the call
+dominates the copy** — so the boundary's cost is mostly *per call*, not per
+byte, and an API that encourages many small calls will hurt far more than one
+that moves large values.
+
+**What this leaves open.** Whether ~2.5 µs is acceptable depends on what
+`cljwit.host` is for, and nothing here says. If it is not, the levers are a
+typed path that does not exist in the C API, a Rust shim exposing one, or
+batching at the API level — in that order of appeal and inverse order of
+effort.
 
 ## Why this shape
 
