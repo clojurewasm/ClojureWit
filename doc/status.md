@@ -29,6 +29,13 @@ ns per dispatch:
 | B5 specialised, hits | — | **0.73** | **2.39** |
 | B5x specialised, mostly misses | — | 1.88 | **12.37** |
 
+**B7 found the crossover, and it is not the same on both lanes:**
+specialisation starts paying at **~26% hit rate on wasmtime** and not until
+**~80% on V8**. A compiler tuned to one lane makes the wrong call on the other.
+The curve is monotonic — 0% hit is the worst point despite being perfectly
+predictable — so the guard costs the test plus the slow path, not a branch
+misprediction, which is what the recorded prediction claimed.
+
 **V8 beats JVM Clojure outright** and its dispatch is free — speculative
 inlining reaches us, as `doc/design/0003-*` hoped. **wasmtime pays 6.1 ns**, and
 four exports along a curve say exactly where it goes: the `call_ref` is 0.13 ns,
@@ -105,6 +112,7 @@ and `.claude/skills/wat` asserted the opposite until it was measured.
 | ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — V8 passes, wasmtime fails |
 | ~~B2~~ | ~~the same site with 10 receiver types~~ | **done** — mechanism confirmed, V8 0.61× JVM, wasmtime 2.84× |
 | ~~B5~~ | ~~guarded call-site specialisation~~ | **done** — both lanes pass, on a coverage condition |
+| ~~B7~~ | ~~the specialisation crossover~~ | **done** — ~26% wasmtime, ~80% V8; no single threshold fits both |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
 | B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph — B2 questions the axis |
 
@@ -115,14 +123,14 @@ unchanged. The surprise is V8: it degrades +122%, like the JVM, because winning
 B1 by speculating means having speculation to lose. Details in
 `doc/design/0002-*`.
 
-**Next is the specialisation crossover**, which B5 turned into the number the
-design rests on: a specialised site is free when the analysis is right and
-*worse than doing nothing* when it is mostly wrong, and the hit rate where those
-cross is unmeasured. B5 and B5x walk different rings, so they cannot be
-interpolated — this needs rings of varying type mix.
+**Next: B3 and B4**, the two contracted S0 benchmarks still unwritten. B4's
+recorded prediction is aimed at hierarchy *depth*, and B2 raised the question of
+whether `ref.cast` cost is really about the variety of input types instead — so
+B4 should measure both axes, and amend the prediction's note if the axis was
+wrong.
 
-- **B7 — the crossover.** What a compiler needs in order to decide whether to
-  specialise a site at all.
+Then, outside the original contract:
+
 - **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
   aggregate argument, unmeasured, and it is what "a Rust developer calls a
   Clojure component" actually costs. Before S1 fixes the type mapping.

@@ -72,6 +72,49 @@
    {:id "B5x"
     :what "guarded specialisation, 2 of 11 steps hit — what it costs when wrong"
     :wat "bench/s0/b2_megamorphic.wat" :export "bench_guarded_miss"
+    :expect #(mod % 11)}
+   ;; B7 — the crossover. Five rings of two types, varying only how often the
+   ;; guard hits, each measured guarded and generic so the comparison is on one
+   ;; ring at a time.
+   {:id "B7g0"
+    :what "crossover: guarded, 0 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_0"
+    :expect #(mod % 11)}
+   {:id "B7n0"
+    :what "crossover: generic dispatch on the same ring, 0 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_0"
+    :expect #(mod % 11)}
+   {:id "B7g3"
+    :what "crossover: guarded, 3 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_3"
+    :expect #(mod % 11)}
+   {:id "B7n3"
+    :what "crossover: generic dispatch on the same ring, 3 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_3"
+    :expect #(mod % 11)}
+   {:id "B7g6"
+    :what "crossover: guarded, 6 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_6"
+    :expect #(mod % 11)}
+   {:id "B7n6"
+    :what "crossover: generic dispatch on the same ring, 6 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_6"
+    :expect #(mod % 11)}
+   {:id "B7g9"
+    :what "crossover: guarded, 9 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_9"
+    :expect #(mod % 11)}
+   {:id "B7n9"
+    :what "crossover: generic dispatch on the same ring, 9 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_9"
+    :expect #(mod % 11)}
+   {:id "B7g11"
+    :what "crossover: guarded, 11 of 11 steps hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_guarded_11"
+    :expect #(mod % 11)}
+   {:id "B7n11"
+    :what "crossover: generic dispatch on the same ring, 11 of 11 would hit"
+    :wat "bench/s0/b2_megamorphic.wat" :export "b7_generic_11"
     :expect #(mod % 11)}])
 
 ;; --- shelling out ----------------------------------------------------------

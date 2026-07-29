@@ -39,6 +39,7 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | _pending_ |
 | B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | _pending_ — but B2 raised a question about the axis: see below |
 | B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor — 0.06 ns, far better than the 1 ns predicted. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
+| B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover **~26% on wasmtime, ~80% on V8** — a 3× difference between lanes. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -201,6 +202,56 @@ rings of varying type mix and is the next thing to measure.
 its residual 0.155 ns of dispatch overhead disappears. V8 speculates the generic
 shape well but not perfectly, and a static guard beats it.
 
+## B7 — measured 2026-07-29. The crossover, and it differs 3× between lanes.
+
+Five rings of eleven nodes, k of them the guarded-for type and the rest one
+other type — so the only thing varying is how often the guard hits.
+Megamorphism is deliberately absent; B2 priced that separately. Each ring is
+measured both ways, so every comparison is within one ring.
+
+ns per dispatch, **wasmtime**:
+
+| hits | guarded | generic | guarded − generic |
+|---|---|---|---|
+| 0/11 | 12.045 | 8.505 | **+3.54** |
+| 3/11 | 10.006 | 10.123 | −0.12 |
+| 6/11 | 7.264 | 10.314 | −3.05 |
+| 9/11 | 4.081 | 9.241 | −5.16 |
+| 11/11 | 2.448 | 8.496 | **−6.05** |
+
+**V8**:
+
+| hits | guarded | generic | guarded − generic |
+|---|---|---|---|
+| 0/11 | 1.412 | 0.893 | **+0.52** |
+| 3/11 | 1.278 | 0.936 | +0.34 |
+| 6/11 | 1.111 | 0.925 | +0.19 |
+| 9/11 | 0.888 | 0.898 | −0.01 |
+| 11/11 | 0.739 | 0.917 | **−0.18** |
+
+**1. The prediction was wrong and its own falsifier fired.** The curve is
+monotonic in hit rate on both lanes — no hump in the middle — and the *worst*
+point is 0% hit, where the branch is perfectly predictable. So the guard's cost
+is the test plus taking the slow path anyway, not misprediction.
+
+**2. The crossover is ~26% on wasmtime and ~80% on V8.** By interpolation:
+wasmtime turns profitable just under 3-in-11, V8 not until nearly 9-in-11.
+**A compiler tuned to one lane makes the wrong call on the other** — at a 50%
+site, specialising wins 3 ns on wasmtime and loses 0.2 ns on V8.
+
+**3. V8 punishes speculative specialisation and wasmtime rewards it.** V8's
+generic path is flat in type mix (0.89–0.94 across every ring) because it
+speculates well; its guarded path degrades from 0.74 to 1.41. wasmtime's
+generic path is flat too (8.5–10.3) but four times slower, so there is far more
+for a correct guard to recover.
+
+**4. What this means for the design.** `0004`'s call-site specialisation needs a
+*threshold*, and there is no single right one. Three options, none free:
+target the conservative lane (80%, leaving 3–6 ns on the table for wasmtime),
+emit per-lane builds (a second artifact, and `0009` already constrains what
+those can be), or make it a build knob and document the trade. That is a
+decision for S3, and it is now grounded rather than guessed.
+
 **Threats to validity, recorded so the number is not over-read.**
 
 - The benchmark is a **dependency chain** — each dispatch's result is the next
@@ -231,6 +282,15 @@ shape well but not perfectly, and a static guard beats it.
 - **B5's guard tests one type.** A real specialised site with several candidates
   needs several guards or a switch, and nothing here says what the second and
   third cost. The 0.06 ns result is the best case by construction.
+- **B7's rings hold two types, B5x's held ten.** They are not points on one
+  curve, and treating them as such is how B7's prediction went wrong: the
+  per-miss cost extrapolated from B5's two points was 14.6 ns, and B7 measured
+  12.0. Fourth time in this project that two rings got compared as if they were
+  one variable.
+- **The arrangement within a ring is unexplored.** B7 clusters the guarded-for
+  type at the head; interleaving it would give the same hit rate with a
+  different branch pattern. Since the misprediction theory was falsified this
+  probably matters little, but "probably" is not a measurement.
 - **B5's fallback is the generic path, not a slow path that re-specialises.**
   A compiler that re-profiles would behave differently, and this project does
   not have one (`0003`: we do not write a JIT).
