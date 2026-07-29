@@ -12,10 +12,11 @@ Repository, toolchain, gate, and CI are in place and verified end to end
 tools — wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0). **CI is green on a
 fresh Linux runner in 50s.**
 
-**S0 has started, and B1 is measured.** The dispatch design in
-`doc/design/0004-*` survives its first contact with an engine — the worst lane
-is 5.6× JVM Clojure against a ~10× stop condition — but it does not survive
-intact. The three headline numbers, in ns per protocol dispatch:
+**S0 has started, B1 is measured, and it passes on one lane of two.** Under the
+stop condition as rewritten on 2026-07-29 — dispatch overhead under 1 ns,
+absolute, per lane — **V8 passes at 0.13 ns and wasmtime fails at 6.08.** The
+design's shape is not refuted; its one remaining lever is now load-bearing
+rather than optional, and B5 decides. Headline numbers, ns per dispatch:
 
 | | JVM Clojure | V8 (node) | wasmtime |
 |---|---|---|---|
@@ -56,6 +57,36 @@ is an official JetBrains prototype doing **both halves of what this project
 does** — a WasmGC module componentized and served by wasmtime. It is the
 closest existing artifact and should be read before S4 is designed.
 
+## Direction set 2026-07-29 — three decisions from outside the repo
+
+1. **Parity is at the boundary** (`0008`). If a Clojure program cannot observe
+   the difference, there is no difference — so the internals are free to be
+   whatever emits good Wasm. This is the permission that `CLAUDE.md`'s
+   "semantics are not negotiable" never stated, and it is what makes
+   specialisation legitimate rather than a shortcut.
+2. **Both lanes are primary, and the budget is absolute** (`0003` amendment,
+   `doc/roadmap.md`). Browser and server, the latter with Wasm edge platforms
+   in view. "~10× JVM Clojure" is gone — it passed B1 at 5.6×, which it should
+   not have — and so is the ratio-to-the-engine's-floor that first replaced it,
+   which rewarded a slow floor. Dispatch overhead under **1 ns**, per lane.
+3. **Two modes: dynamic in development, static in production** (`0009`).
+   Designed together from the start, because the output-format decisions this
+   forces cannot be retrofitted once compiled units exist.
+
+The enabling measurement for (3): **independently compiled units share WasmGC
+types iff their rec groups canonicalise alike.** On V8, two separate
+`WebAssembly.Instance` calls with the reference passed through the host — module
+B reads module A's objects; on wasmtime, `wasmtime run --preload`. So a REPL can
+compile new code against a running heap.
+
+The rule is **not** "one frozen group": groups are independent, so the invariant
+is *minimise what shares one*, and a `deftype` goes in its own group referring
+to the shared ones. Sharing is expensive — adding any type to a group changes
+the identity of every type in it, which for `0004`'s per-arity `$fnN`/`$vtN`
+pairs means **adding one supported arity invalidates every previously compiled
+unit**. `test/cljwit/rec_group_identity_test.clj` pins all of it in the gate,
+and `.claude/skills/wat` asserted the opposite until it was measured.
+
 ## Next
 
 **S0 — B2, B3, B4.** Same contract, `bench/s0/README.md`; run them with
@@ -64,7 +95,7 @@ closest existing artifact and should be read before S4 is designed.
 
 | | Measures | Decides |
 |---|---|---|
-| ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — viable, 0.58×/5.62× |
+| ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — V8 passes, wasmtime fails |
 | B2 | the same site with 10 receiver types | whether we beat the JVM where it hurts |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
 | B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph |
@@ -73,8 +104,23 @@ B2 is next and is the highest-value of the three: B1's JVM baseline is a
 monomorphic site the JIT appears to devirtualise entirely, which is the case
 protocols are supposed to lose. B2 is where the design's actual claim lives.
 
+Then **two benchmarks the rewritten stop condition and `0007` now require**,
+neither of which existed when S0 was scoped:
+
+- **B5 — call-site specialisation on wasmtime.** S0 cannot conclude without
+  it: it is the only lever B1 found, and the stop condition is written against
+  it. Highest priority after B2.
+- **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
+  aggregate argument, unmeasured, and it is what "a Rust developer calls a
+  Clojure component" actually costs. Before S1 fixes the type mapping.
+
 **Not worth doing:** collapsing the vtable's indirection levels. B1L measured
 it at 0.11 ns. That question is closed.
+
+**Not yet checked:** whether a module *compiled after* a wasmtime store has been
+running and allocating behaves like `--preload`'s two-files-at-startup case.
+That is the literal REPL case (`0009`). Also unchecked: browser realms (all V8
+results are one Node isolate), and `wasm-opt` passes beyond the ones isolated.
 
 ## Blocked / needs a decision from outside
 
@@ -89,6 +135,10 @@ it at 0.11 ns. That question is closed.
 - **wasmtime's process-slope timing is linear.** Wall time at n = 5/10/15/20 M
   fits a line with an intercept indistinguishable from zero, so the slope is
   per-iteration cost and not process startup.
+- **The WasmGC type-identity rule is asserted in the gate.**
+  `test/cljwit/rec_group_identity_test.clj` builds each case and validates it
+  with `wasm-tools` alone, so it runs anywhere `bb check` does — including the
+  positive case `doc/design/0009` depends on and four ways of breaking it.
 - **A cold-start session works.** A fresh agent with no prior context, given
   only `/next`, correctly identified the project, the current stage, that the
   compiler does not exist, and that the next action is to record S0 predictions
@@ -96,6 +146,22 @@ it at 0.11 ns. That question is closed.
   skipping S0. Re-run this check after any change to `.claude/`.
 
 ## Incidents so far
+
+- **2026-07-29 — a measurement a whole design note rested on shipped as prose,
+  with no way to re-run it.** `0009`'s rec-group result had no `.wat`, no
+  script and no command anywhere in the repo, while B1 — a *less* load-bearing
+  result — got `bench/s0/` and a task. `bb check` cannot catch that. Fixed by
+  landing it as a test; the general lesson is that "the command that produced
+  it" applies to pass/fail assertions and not only to timings.
+- **2026-07-29 — two design conclusions were drawn from one-variable
+  experiments, again.** `0009` concluded "one frozen rec group" from a single
+  negative case when the matrix says *minimise what shares a group*; `0003`
+  concluded WasmGC "excludes the near-native runtimes" from a table that
+  omitted WasmEdge, which supports GC at 1.74×. Both were caught by adversarial
+  review before push. The standing constraint in `.claude/CLAUDE.md` covering
+  this was added the same day and did not prevent it — the constraint is
+  necessary and not sufficient, and the thing that actually caught it both
+  times was an independent reviewer with fresh context.
 
 - **2026-07-29 — a stage was entered without checking what it stood on.** S0's
   four benchmarks were designed, and one of them built and measured, before

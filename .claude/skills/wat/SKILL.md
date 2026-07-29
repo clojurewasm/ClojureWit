@@ -49,9 +49,26 @@ wrong.
 - **`wasm-opt` needs its feature flags spelled out.** Without `--enable-gc` it
   will refuse — or worse, an older build will accept and mangle. Check
   `wasm-opt --version` against `tools.json`.
-- **Recursive types must be in one `(rec ...)` block.** WasmGC subtyping is
-  nominal; two structurally identical types declared separately are *different*
-  types, and `ref.test` between them fails in a way that looks like a logic bug.
+- **Mutually recursive types must share one `(rec ...)` block**, or they are not
+  the types they appear to be. The reason is *not* nominality — this line said
+  the opposite until it was measured on 2026-07-29. **Type identity is the
+  canonicalised rec group plus the index within it.** Two modules declaring an
+  identical group get the *same* type, even compiled separately and never
+  linked. Part of that identity, all measured: field types, **field
+  mutability**, `final` versus open to subtyping, a **declared supertype**, the
+  other members of the group, and the **index within it** (two byte-identical
+  entries at index 0 and 1 are different types). Not part of it: the `(rec …)`
+  wrapper around a singleton, and type-section order. Identity is transitive —
+  a group whose text is unchanged changes identity if a group it references
+  did. The rec group is a wire format between compilation units;
+  `doc/design/0009-*` and `test/cljwit/rec_group_identity_test.clj` pin this.
+- **`wasm-opt --closed-world` silently breaks cross-unit type sharing.** With
+  it, `-O2`/`-O3`/`--gufa` fold a `ref.test` against a shared type to
+  `i32.const 0` **when that type appears in no exported signature** — nothing
+  tells Binaryen the objects come from outside. Correct under a closed world,
+  catastrophic for a unit sharing a heap, and it fails as a wrong answer, not
+  an error. Never apply it to anything that shares a heap with separately
+  compiled code. Plain `-O3` without `--closed-world` is safe.
 - **`ref.cast` failure traps; `br_on_cast` branches.** Use `br_on_cast` /
   `br_on_cast_fail` for dispatch. A trap in a benchmark shows up as a wrong
   number, not an error, if you are catching at the harness level.

@@ -22,13 +22,41 @@ happen.
 
 ### S0 — Is the dispatch design viable? (days)
 
-Four hand-written WAT benchmarks (`bench/s0/`). No compiler, no library.
+Hand-written WAT benchmarks (`bench/s0/`). No compiler, no library.
 
-**Stop condition:** if protocol dispatch is more than ~10× slower than JVM
-Clojure's, the premise "a practical Clojure on Wasm" does not hold. Either the
-design changes or the scope narrows to workloads that don't dispatch (which is
-a much smaller, and much less interesting, project). Say so out loud rather
-than pressing on.
+**Stop condition, rewritten 2026-07-29.** The original was "more than ~10×
+slower than JVM Clojure": too loose to discriminate — B1 came in at 5.6× on the
+server lane and passed a bar it should not have — and aimed at the engine's own
+baseline, which is not ours to fix. A first rewrite used a *ratio* to the
+engine's direct-call floor and was worse: a ratio rewards a slow floor, so the
+same design passed on wasmtime and failed on V8. The condition is an **absolute
+budget** instead.
+
+> **Dispatch overhead — B1 minus B1c, same lane, same build — must be under
+> 1 ns.**
+>
+> - Over budget on **both** lanes → the design is wrong. Change it.
+> - Over budget on **one** lane → that lane is not a target. Say so out loud
+>   rather than quietly shipping something slow there.
+
+Why 1 ns: it is roughly a 2× tax on dispatch-heavy code, JVM Clojure's own
+overhead is 0.08 ns, and B1c shows both engines can call directly for ~1–2 ns.
+It is a judgement, not a derivation — but it is absolute, so it cannot be
+gamed by slowing the baseline. The unoptimised build is the reference, because
+`wasm-opt -O3` halves the control on one lane and not the other, which
+`doc/design/0002-*` records as a threat to validity.
+
+| | B1 | B1c | overhead |
+|---|---|---|---|
+| V8 | 0.87 | 0.74 | **0.13 ns — passes** |
+| wasmtime | 8.43 | 2.35 | **6.08 ns — fails today** |
+
+B1 identified the only lever that moves the server lane: making the target
+statically known. **S0 does not conclude until B5 measures whether it works** —
+and B5 must measure a *guarded* specialised site (`br_on_cast` plus a direct
+call, including the miss path) weighted by the specialisation coverage
+`doc/design/0004-*` says the compiler will report. An unguarded specialised
+site is B1c by construction and would measure nothing.
 
 ### S1 — `cljwit.host`: call Wasm from JVM Clojure (weeks)
 
@@ -66,6 +94,13 @@ handle tables. Scalar-only exports skip all of it. The sibling zwasm's
 equivalent is 8,574 lines and required no core changes — bounded work rather
 than a research problem, but a stage, not a detail of one.
 
+### Running through all of it: two modes
+
+`doc/design/0009-*` — an open world in development, a closed one in production
+— is not a stage. It is a constraint on S3's output format that cannot be added
+afterwards, so it is decided before S3 emits anything and revisited at every
+stage that produces an artifact.
+
 ### S5 onward — decided by what S0–S4 measured
 
 Persistent collections, the numeric tower, protocols and multimethods, the
@@ -82,6 +117,11 @@ guessing.
 - **Not a claim to beat JVM Clojure on peak throughput.** The expected shape is
   the opposite profile: better on dispatch-heavy and boxed-arithmetic code,
   worse where the JVM can use primitives. See `doc/design/0004-*`.
+- **Not a claim of a single performance multiplier.** The engine ranking
+  inverts with the workload — V8 is 9.8× faster than wasmtime on B1's dispatch
+  and ~5× slower on compute-bound linear-memory code. Any one number quoted
+  about this project is wrong in one of the two directions
+  (`doc/design/0003-*`).
 
 ## Open questions we know we have
 

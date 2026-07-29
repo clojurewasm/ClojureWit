@@ -30,9 +30,11 @@
 ;; separates "each level costs something" from "the first load costs everything".
 
 (module
-  ;; WasmGC subtyping is nominal and these four types are mutually recursive
-  ;; ($fn1 -> $obj -> $vtables -> $vt1 -> $fn1), so they must share one rec
-  ;; block or they are not the types they appear to be.
+  ;; These four types are mutually recursive ($fn1 -> $obj -> $vtables -> $vt1
+  ;; -> $fn1), so they must share one rec block or they are not the types they
+  ;; appear to be. Sharing a group is not free: it makes every type in it
+  ;; identity-dependent on all the others — see doc/design/0009 and
+  ;; test/cljwit/rec_group_identity_test.clj.
   (rec
     (type $fn1 (func (param (ref null $obj)) (result (ref null $obj))))
     (type $vt1 (array (ref null $fn1)))

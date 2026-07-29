@@ -68,8 +68,12 @@ control, so nothing below turns on a difference smaller than that.
 
 **What it says.**
 
-1. **The design is viable on both engines by the S0 stop condition.** The
-   roadmap stops the project at ~10× JVM; the worst lane is 5.6×.
+1. **The design passes on V8 and fails on wasmtime.** Under the stop condition
+   as it stood at the time — ~10× JVM Clojure — both lanes passed at 5.6×
+   worst. That bar was withdrawn on 2026-07-29 for being unable to
+   discriminate, and under its replacement (dispatch overhead under 1 ns,
+   absolute, per lane) V8 passes at 0.13 and wasmtime fails at 6.08. See
+   `doc/roadmap.md`.
 2. **On V8 the dispatch is free** — 0.13 ns over the direct-call control across
    all three levels, and V8 still beats JVM Clojure outright. Speculative
    inlining reaches us.

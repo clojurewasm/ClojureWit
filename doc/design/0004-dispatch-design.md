@@ -11,7 +11,10 @@
 > **load-to-indirect-branch recurrence**, not the depth of the indirection — so
 > **flattening this structure buys nothing**, and the lever is the one this note
 > already proposes elsewhere: make the target statically known. Nothing below is
-> retracted; the shape is unchanged and the S0 stop condition is not tripped.
+> retracted and the shape is unchanged. The S0 stop condition has since been
+> rewritten (`doc/roadmap.md`, 2026-07-29) and under it **the server lane
+> fails**: 6.08 ns of dispatch overhead against a 1 ns budget. V8 passes at
+> 0.13.
 > B2–B4 have not run. See `doc/design/0002-measure-first.md`.
 
 Clojure is a dispatch-heavy language, and dispatch is where a Wasm port most
@@ -113,10 +116,13 @@ new vocabulary is needed.
 B1 showing protocol dispatch far off JVM parity. See
 `doc/design/0002-measure-first.md` for the recorded predictions.
 
-**B1 has run and did not falsify it** — the worst lane is 5.6× against a ~10×
-stop condition. It did falsify the note's account of *where the cost is*, which
-is recorded in the amendment above. Still open: B2 (does the no-cache claim
-actually beat the JVM when a site is megamorphic?), B3, B4.
+**B1 has run.** It did not falsify the design's shape, and it did falsify this
+note's account of *where the cost is* (amendment above). Under the stop
+condition as rewritten on 2026-07-29 it also **fails on the server lane** —
+6.08 ns of overhead against a 1 ns budget — which is not a refutation of the
+design but a statement that its remaining lever is now load-bearing rather than
+optional. Still open: B2 (does the no-cache claim actually beat the JVM when a
+site is megamorphic?), B5 (does specialisation close the server lane?), B3, B4.
 
 B1 also raises the value of the specialization machinery under "Known weak
 points": on wasmtime it is not an optimization but the only thing that moves

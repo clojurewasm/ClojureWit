@@ -11,6 +11,18 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
 - `bb check` as the single gate, run identically by developers and CI.
 - A pinned toolchain: `flake.nix` for exactness, `tools.json` as the shared
   version SSOT for machines without Nix.
+- **`doc/design/0008`** — parity is at the boundary: if a Clojure program
+  cannot observe the difference, the internals are ours to choose.
+- **`doc/design/0009`** — two modes, dynamic in development and static in
+  production, designed together because the output-format constraints they
+  force cannot be retrofitted. Rests on a measured fact, now pinned in the gate
+  by `test/cljwit/rec_group_identity_test.clj`: independently compiled units
+  share WasmGC types iff their rec groups canonicalise alike.
+- **A rewritten S0 stop condition** — dispatch overhead under 1 ns, absolute,
+  per lane. Replaces "~10× JVM Clojure" (which passed B1 at 5.6×) and a
+  ratio-to-the-engine's-floor draft (which rewarded a slow floor). Under it B1
+  passes on V8 and **fails on wasmtime**. `doc/design/0003` gained the survey
+  behind it: the engine ranking inverts with the workload.
 - **`/survey`** — the reconnaissance discipline: search, read the primary
   source, read what someone who solved it wrote down, then *build the smallest
   thing that would fail if the claim were false*. Run on stage entry. `bb ref`
