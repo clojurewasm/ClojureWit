@@ -21,19 +21,23 @@
                :task (run "bin/check-tools")}
 
   test        {:doc  "Unit tests (JVM)"
-               :task (if (seq (fs/glob "test" "**.clj"))
+               :task (if (and (fs/exists? "test") (seq (fs/glob "test" "**.clj")))
                        (run "clojure" "-X:test")
                        (println "no tests yet — skipping"))}
 
   lint        {:doc  "clj-kondo over the source tree"
-               :task (if (fs/which "clj-kondo")
-                       (run "clj-kondo" "--lint" "src" "test" "bench")
-                       (println "clj-kondo not installed — skipping"))}
+               :task (let [dirs (filter fs/exists? ["src" "test" "bench" "dev"])]
+                       (cond
+                         (not (fs/which "clj-kondo")) (println "clj-kondo not installed — skipping")
+                         (empty? dirs) (println "nothing to lint yet — skipping")
+                         :else (apply run "clj-kondo" "--lint" dirs)))}
 
   fmt-check   {:doc  "cljfmt check"
-               :task (if (fs/which "cljfmt")
-                       (run "cljfmt" "check" "src" "test")
-                       (println "cljfmt not installed — skipping"))}
+               :task (let [dirs (filter fs/exists? ["src" "test" "bench" "dev"])]
+                       (cond
+                         (not (fs/which "cljfmt")) (println "cljfmt not installed — skipping")
+                         (empty? dirs) (println "nothing to format-check yet — skipping")
+                         :else (apply run "cljfmt" "check" dirs)))}
 
   bench-s0    {:doc  "S0 dispatch benchmarks (V8 + wasmtime). See bench/s0/README.md"
                :task (let [need (remove fs/which ["wasmtime" "wasm-opt" "node" "wasm-tools"])]
