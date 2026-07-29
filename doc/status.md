@@ -51,13 +51,13 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Widen `cljwit.host`'s marshalling past the scalars.** `src/cljwit/host.clj`
-   exists and implements `0014` — three lifetimes, reflection-driven exports,
-   exact WIT names with keyword aliases, a non-concurrency check, eager result
-   lifting. It marshals `bool`, the integers, `f32`/`f64`, `char` and `string`;
-   every other kind fails at instantiation naming the kind, rather than at the
-   call with a wrong answer. `enum`, `option`, `result`, `variant`, `list` and
-   `record` are all proven in `roundtrip_test` and need moving across.
+1. **`cljwit.host` marshals every row `0012` accepts.** `src/cljwit/host.clj`
+   implements `0014` and covers the scalars, `string`, `enum`, `option`,
+   `result`, `variant`, `list` and `record` — types compiled from the
+   component's own reflected type tree, not hard-coded. `resource`,
+   `flags`, `tuple`, `stream`/`future` and `map` fail at instantiation naming
+   the kind. **What is left for S1 is the `require`-a-component surface**,
+   which is how `doc/roadmap.md` states the stage.
 2. **`0012`'s `ex-data` contract needs a decision.** It promises the WIT type
    name in a thrown `result`, and reflection cannot supply one — the C API has
    no accessor for a type's own name. Either the contract shrinks or the name

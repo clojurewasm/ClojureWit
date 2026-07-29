@@ -37,6 +37,16 @@
 (def ^:private ITEM 24)       ; wasmtime_component_item_t, kind at 0, union at 8
 (def ^:private ITEM-OF 8)
 (def ^:private ITEM-FUNC 3)   ; WASMTIME_COMPONENT_ITEM_COMPONENT_FUNC
+(def ^:private VT-OF 8)       ; ...its union: one pointer to the specific type
+(def ^:private RES-OK 8)      ; wasmtime_component_valresult_t {bool; val *}
+(def ^:private RES-VAL 16)
+(def ^:private VAR-NAME 8)    ; wasmtime_component_valvariant_t {wasm_name_t; val *}
+(def ^:private VAR-VAL 24)
+(def ^:private VEC-SIZE 0)    ; vallist / valrecord {size_t size; T *data;}
+(def ^:private VEC-DATA 8)
+(def ^:private ENTRY 48)      ; valrecord_entry {wasm_name_t name; val val;}
+(def ^:private ENTRY-NAME 0)
+(def ^:private ENTRY-VAL 16)
 (def ^:private FUNC 24)       ; wasmtime_component_func_t
 (def ^:private INSTANCE 16)
 
@@ -101,13 +111,22 @@
      :ft-param-nth  (b "wasmtime_component_func_type_param_nth" BOOL ADDR I64 ADDR ADDR ADDR)
      :ft-result     (b "wasmtime_component_func_type_result" BOOL ADDR ADDR)
      :vt-delete     (b "wasmtime_component_valtype_delete" nil ADDR)
+     :list-el       (b "wasmtime_component_list_type_element" nil ADDR ADDR)
+     :option-ty     (b "wasmtime_component_option_type_ty" nil ADDR ADDR)
+     :result-ok     (b "wasmtime_component_result_type_ok" BOOL ADDR ADDR)
+     :result-err    (b "wasmtime_component_result_type_err" BOOL ADDR ADDR)
+     :enum-count    (b "wasmtime_component_enum_type_names_count" I64 ADDR)
+     :enum-nth      (b "wasmtime_component_enum_type_names_nth" BOOL ADDR I64 ADDR ADDR)
+     :rec-count     (b "wasmtime_component_record_type_field_count" I64 ADDR)
+     :rec-nth       (b "wasmtime_component_record_type_field_nth" BOOL ADDR I64 ADDR ADDR ADDR)
+     :var-count     (b "wasmtime_component_variant_type_case_count" I64 ADDR)
+     :var-nth       (b "wasmtime_component_variant_type_case_nth" BOOL ADDR I64 ADDR ADDR ADDR ADDR)
      :linker-new    (b "wasmtime_component_linker_new" ADDR ADDR)
      :linker-delete (b "wasmtime_component_linker_delete" nil ADDR)
      :instantiate   (b "wasmtime_component_linker_instantiate" ADDR ADDR ADDR ADDR ADDR)
      :export-index  (b "wasmtime_component_instance_get_export_index" ADDR ADDR ADDR ADDR ADDR I64)
      :get-func      (b "wasmtime_component_instance_get_func" BOOL ADDR ADDR ADDR ADDR)
-     :func-call     (b "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)
-     :val-delete    (b "wasmtime_component_val_delete" nil ADDR)}))
+     :func-call     (b "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)}))
 
 (defn- cstr [^Arena arena ^String t]
   (let [b (.getBytes t "UTF-8")
@@ -125,55 +144,261 @@
     (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
     (String. b "UTF-8")))
 
+;; --- reflection -------------------------------------------------------------
+
+(declare valtype->tree)
+
+(defn- name-pair [^Arena arena]
+  [^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
+   ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout I64)])
+
+(defn- vt-kind [^MemorySegment vt]
+  (get VALTYPE-KIND (bit-and (long (.get vt I8 (long 0))) 0xFF)))
+
+(defn- sub-valtype
+  "Reads a nested valtype through `f`, into a fresh segment, and returns its
+   tree. The segment is deleted afterwards: wasmtime clones on the way out."
+  [api ^Arena arena f & args]
+  (let [vt ^MemorySegment (.allocate arena (long VALTYPE))]
+    (when (apply invoke f (concat args [vt]))
+      (let [t (valtype->tree api arena vt)]
+        (invoke (:vt-delete api) vt)
+        t))))
+
+(defn- valtype->tree
+  "A WIT type as Clojure data. Scalars are bare keywords; everything with
+   structure is a map carrying the structure, because a marshaller cannot be
+   built from the kind alone."
+  [api ^Arena arena ^MemorySegment vt]
+  (let [k  (vt-kind vt)
+        of (.get vt ADDR (long VT-OF))]
+    (case k
+      :list   {:kind :list
+               :element (let [e ^MemorySegment (.allocate arena (long VALTYPE))]
+                          (invoke (:list-el api) of e)
+                          (let [t (valtype->tree api arena e)]
+                            (invoke (:vt-delete api) e) t))}
+      :option {:kind :option
+               :ty (let [e ^MemorySegment (.allocate arena (long VALTYPE))]
+                     (invoke (:option-ty api) of e)
+                     (let [t (valtype->tree api arena e)]
+                       (invoke (:vt-delete api) e) t))}
+      :result {:kind :result
+               :ok  (sub-valtype api arena (:result-ok api) of)
+               :err (sub-valtype api arena (:result-err api) of)}
+      :enum   (let [[pp lp] (name-pair arena)]
+                {:kind :enum
+                 :cases (mapv (fn [i]
+                                (invoke (:enum-nth api) of (long i) pp lp)
+                                (read-name pp lp))
+                              (range (invoke (:enum-count api) of)))})
+      :record (let [[pp lp] (name-pair arena)
+                    ft ^MemorySegment (.allocate arena (long VALTYPE))]
+                {:kind :record
+                 :fields (mapv (fn [i]
+                                 (invoke (:rec-nth api) of (long i) pp lp ft)
+                                 (let [n (read-name pp lp)
+                                       t (valtype->tree api arena ft)]
+                                   (invoke (:vt-delete api) ft)
+                                   [n t]))
+                               (range (invoke (:rec-count api) of)))})
+      :variant (let [[pp lp] (name-pair arena)
+                     hp ^MemorySegment (.allocate arena (long 1))
+                     ft ^MemorySegment (.allocate arena (long VALTYPE))]
+                 {:kind :variant
+                  :cases (mapv (fn [i]
+                                 (invoke (:var-nth api) of (long i) pp lp hp ft)
+                                 (let [n (read-name pp lp)
+                                       has? (not= 0 (.get hp I8 (long 0)))
+                                       t (when has? (valtype->tree api arena ft))]
+                                   (when has? (invoke (:vt-delete api) ft))
+                                   [n t]))
+                               (range (invoke (:var-count api) of)))})
+      k)))
+
 ;; --- marshalling ------------------------------------------------------------
-;; 0012's rows, as far as this implementation goes. An unsupported kind fails
-;; at instantiation with the kind named, not at the call with a wrong answer.
+;; Lowering and lifting are *compiled* from the reflected tree once per export,
+;; not interpreted per call. An unsupported type fails at instantiation naming
+;; the kind, rather than at the call with a wrong answer.
 
-(def ^:private SUPPORTED (set (keys VAL-KIND)))
+(declare lower-fn lift-fn)
 
-(defn- lower!
-  [^MemorySegment seg kind v]
-  (.set seg I8 (long 0) (byte (VAL-KIND kind)))
-  (case kind
-    ;; One byte, not four: the union member is a C `bool`.
-    :bool   (.set seg I8 (long UNION) (byte (if v 1 0)))
-    :s8     (.set seg I8 (long UNION) (byte v))
-    :u8     (.set seg I8 (long UNION) (unchecked-byte v))
-    (:s16 :u16 :s32 :u32 :char) (.set seg I32 (long UNION) (unchecked-int v))
-    (:s64 :u64) (.set seg I64 (long UNION) (long v))
-    :f32    (.set seg F32 (long UNION) (float v))
-    :f64    (.set seg F64 (long UNION) (double v))
-    :string (throw (ex-info "string lowering needs an arena" {}))))
-
-(defn- lower-string! [^Arena arena ^MemorySegment seg ^String v]
-  (let [b   (.getBytes v "UTF-8")
+(defn- write-name! [^Arena arena ^MemorySegment seg off ^String t]
+  (let [b   (.getBytes t "UTF-8")
         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
-    (.set seg I8 (long 0) (byte (VAL-KIND :string)))
-    (.set seg I64 (long (+ UNION STR-SIZE)) (long (alength b)))
-    (.set seg ADDR (long (+ UNION STR-DATA)) buf)))
+    (.set seg I64 (long (+ off STR-SIZE)) (long (alength b)))
+    (.set seg ADDR (long (+ off STR-DATA)) buf)))
 
-(defn- lift
-  "Lifts eagerly into JVM-owned values. 0014 E: the payload is invalid after
-   the next call on this function, so nothing backed by `seg` may escape."
-  [^MemorySegment seg kind]
-  (case kind
-    :bool   (not= 0 (.get seg I8 (long UNION)))
-    :s8     (.get seg I8 (long UNION))
-    :u8     (bit-and (long (.get seg I8 (long UNION))) 0xFF)
-    :s16    (unchecked-short (.get seg I32 (long UNION)))
-    :u16    (bit-and (long (.get seg I32 (long UNION))) 0xFFFF)
-    :s32    (.get seg I32 (long UNION))
-    :char   (.get seg I32 (long UNION))
-    :u32    (bit-and (long (.get seg I32 (long UNION))) 0xFFFFFFFF)
-    (:s64 :u64) (.get seg I64 (long UNION))
-    :f32    (.get seg F32 (long UNION))
-    :f64    (.get seg F64 (long UNION))
-    :string (let [n (.get seg I64 (long (+ UNION STR-SIZE)))
-                  p ^MemorySegment (.get seg ADDR (long (+ UNION STR-DATA)))
-                  b (byte-array n)]
-              (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
-              (String. b "UTF-8"))))
+(defn- read-str [^MemorySegment seg off]
+  (let [n (.get seg I64 (long (+ off STR-SIZE)))
+        p ^MemorySegment (.get seg ADDR (long (+ off STR-DATA)))
+        b (byte-array n)]
+    (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
+    (String. b "UTF-8")))
+
+(defn- scalar-lower [kind]
+  (fn [_ ^MemorySegment seg v]
+    (.set seg I8 (long 0) (byte (VAL-KIND kind)))
+    (case kind
+      ;; One byte, not four: the union member is a C `bool`.
+      :bool (.set seg I8 (long UNION) (byte (if v 1 0)))
+      :s8   (.set seg I8 (long UNION) (byte v))
+      :u8   (.set seg I8 (long UNION) (unchecked-byte v))
+      (:s16 :u16 :s32 :u32 :char) (.set seg I32 (long UNION) (unchecked-int v))
+      (:s64 :u64) (.set seg I64 (long UNION) (long v))
+      :f32  (.set seg F32 (long UNION) (float v))
+      :f64  (.set seg F64 (long UNION) (double v)))))
+
+(defn- scalar-lift [kind]
+  (fn [^MemorySegment seg]
+    (case kind
+      :bool (not= 0 (.get seg I8 (long UNION)))
+      :s8   (.get seg I8 (long UNION))
+      :u8   (bit-and (long (.get seg I8 (long UNION))) 0xFF)
+      :s16  (unchecked-short (.get seg I32 (long UNION)))
+      :u16  (bit-and (long (.get seg I32 (long UNION))) 0xFFFF)
+      (:s32 :char) (.get seg I32 (long UNION))
+      :u32  (bit-and (long (.get seg I32 (long UNION))) 0xFFFFFFFF)
+      (:s64 :u64) (.get seg I64 (long UNION))
+      :f32  (.get seg F32 (long UNION))
+      :f64  (.get seg F64 (long UNION)))))
+
+(defn- val-of
+  "Allocates one wasmtime_component_val_t in `arena` and lowers `v` into it."
+  [lower ^Arena arena v]
+  (let [m ^MemorySegment (.allocate arena (long VAL))]
+    (lower arena m v)
+    m))
+
+(defn- lower-fn [tree]
+  (if (keyword? tree)
+    (if (= :string tree)
+      (fn [^Arena arena ^MemorySegment seg v]
+        (.set seg I8 (long 0) (byte (VAL-KIND :string)))
+        (write-name! arena seg UNION v))
+      (scalar-lower tree))
+    (case (:kind tree)
+      :enum (fn [^Arena arena ^MemorySegment seg v]
+              (.set seg I8 (long 0) (byte 17))
+              (write-name! arena seg UNION (name v)))
+      :option (let [inner (lower-fn (:ty tree))]
+                (fn [^Arena arena ^MemorySegment seg v]
+                  (.set seg I8 (long 0) (byte 18))
+                  (let [^MemorySegment q (if (nil? v)
+                                           MemorySegment/NULL
+                                           (val-of inner arena v))]
+                    (.set seg ADDR (long UNION) q))))
+      :result (let [lo (some-> (:ok tree) lower-fn)
+                    le (some-> (:err tree) lower-fn)]
+                (fn [^Arena arena ^MemorySegment seg v]
+                  (let [[tag payload] v
+                        ok? (= :ok tag)
+                        f   (if ok? lo le)]
+                    (.set seg I8 (long 0) (byte 19))
+                    (.set seg I8 (long RES-OK) (byte (if ok? 1 0)))
+                    (let [^MemorySegment q (if (nil? f)
+                                             MemorySegment/NULL
+                                             (val-of f arena payload))]
+                      (.set seg ADDR (long RES-VAL) q)))))
+      :variant (let [lowers (into {} (map (fn [[n t]] [n (some-> t lower-fn)]))
+                                  (:cases tree))]
+                 (fn [^Arena arena ^MemorySegment seg v]
+                   (let [[tag payload] v
+                         nm (name tag)
+                         f  (get lowers nm)]
+                     (.set seg I8 (long 0) (byte 16))
+                     (write-name! arena seg VAR-NAME nm)
+                     (let [^MemorySegment q (if (nil? f)
+                                              MemorySegment/NULL
+                                              (val-of f arena payload))]
+                       (.set seg ADDR (long VAR-VAL) q)))))
+      :list (let [el (lower-fn (:element tree))]
+              (fn [^Arena arena ^MemorySegment seg v]
+                (let [n   (count v)
+                      buf ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))]
+                  (dotimes [i n]
+                    (el arena (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
+                  (.set seg I8 (long 0) (byte 13))
+                  (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
+                  (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
+      :record (let [fs (mapv (fn [[n t]] [n (lower-fn t)]) (:fields tree))]
+                (fn [^Arena arena ^MemorySegment seg v]
+                  ;; Fields go out in declaration order: a Clojure map has none.
+                  (let [buf ^MemorySegment (.allocate arena (long (* ENTRY (count fs))))]
+                    (dotimes [i (count fs)]
+                      (let [[nm f] (nth fs i)
+                            e (.asSlice buf (long (* ENTRY i)) (long ENTRY))]
+                        (write-name! arena e ENTRY-NAME nm)
+                        (f arena (.asSlice e (long ENTRY-VAL) (long VAL))
+                           (get v (keyword nm)))))
+                    (.set seg I8 (long 0) (byte 14))
+                    (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count fs)))
+                    (.set seg ADDR (long (+ UNION VEC-DATA)) buf)))))))
+
+(defn- lift-fn [tree]
+  (if (keyword? tree)
+    (if (= :string tree)
+      (fn [^MemorySegment seg] (read-str seg UNION))
+      (scalar-lift tree))
+    (case (:kind tree)
+      :enum (fn [^MemorySegment seg] (keyword (read-str seg UNION)))
+      :option (let [inner (lift-fn (:ty tree))]
+                (fn [^MemorySegment seg]
+                  (let [p ^MemorySegment (.get seg ADDR (long UNION))]
+                    (when-not (.equals MemorySegment/NULL p)
+                      (inner (.reinterpret p (long VAL)))))))
+      :result (let [lo (some-> (:ok tree) lift-fn)
+                    le (some-> (:err tree) lift-fn)]
+                (fn [^MemorySegment seg]
+                  (let [ok? (not= 0 (.get seg I8 (long RES-OK)))
+                        f   (if ok? lo le)
+                        p ^MemorySegment (.get seg ADDR (long RES-VAL))]
+                    [(if ok? :ok :err)
+                     (when (and f (not (.equals MemorySegment/NULL p)))
+                       (f (.reinterpret p (long VAL))))])))
+      :variant (let [lifts (into {} (map (fn [[n t]] [n (some-> t lift-fn)]))
+                                 (:cases tree))]
+                 (fn [^MemorySegment seg]
+                   (let [nm (read-str seg VAR-NAME)
+                         f  (get lifts nm)
+                         p ^MemorySegment (.get seg ADDR (long VAR-VAL))]
+                     (if (and f (not (.equals MemorySegment/NULL p)))
+                       [(keyword nm) (f (.reinterpret p (long VAL)))]
+                       [(keyword nm)]))))
+      :list (let [el (lift-fn (:element tree))]
+              (fn [^MemorySegment seg]
+                (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
+                      p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
+                      b (.reinterpret p (long (* VAL n)))]
+                  (mapv (fn [i] (el (.asSlice b (long (* VAL i)) (long VAL))))
+                        (range n)))))
+      :record (let [fs (mapv (fn [[n t]] [(keyword n) (lift-fn t)]) (:fields tree))]
+                (fn [^MemorySegment seg]
+                  (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
+                        p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
+                        b (.reinterpret p (long (* ENTRY n)))]
+                    ;; Keyed by the *reflected* field order, which the ABI fixes.
+                    (into {} (map (fn [i]
+                                    (let [[k f] (nth fs i)
+                                          e (.asSlice b (long (* ENTRY i)) (long ENTRY))]
+                                      [k (f (.asSlice e (long ENTRY-VAL) (long VAL)))]))
+                                  (range n)))))))))
+
+(defn- unsupported
+  "Kinds `0012` has no accepted mapping for yet, found anywhere in a tree."
+  [tree]
+  (cond
+    (nil? tree) nil
+    (keyword? tree) (when-not (contains? VAL-KIND tree) [tree])
+    :else (case (:kind tree)
+            :list (unsupported (:element tree))
+            :option (unsupported (:ty tree))
+            :result (concat (unsupported (:ok tree)) (unsupported (:err tree)))
+            :enum nil
+            :record (mapcat (fn [[_ t]] (unsupported t)) (:fields tree))
+            :variant (mapcat (fn [[_ t]] (unsupported t)) (:cases tree))
+            [(:kind tree)])))
 
 ;; --- handles ----------------------------------------------------------------
 
@@ -277,22 +502,24 @@
     (->Artifact e arena (.get out ADDR (long 0)) (AtomicBoolean. false))))
 
 (defn- reflect-func
-  "The declared shape of one exported function: parameter names and types, and
-   the result type, read from the component itself."
+  "The declared shape of one exported function: parameter names and full types,
+   and the result type, read from the component itself. Nested structure comes
+   with it — a marshaller cannot be built from the kind alone."
   [api ^Arena arena ^MemorySegment ft]
   (let [np  (invoke (:ft-params api) ft)
-        pp  ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
-        lp  ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout I64)
-        vt  ^MemorySegment (.allocate arena (long VALTYPE))
-        kind (fn [] (get VALTYPE-KIND (bit-and (long (.get vt I8 (long 0))) 0xFF)))]
+        [pp lp] (name-pair arena)
+        vt  ^MemorySegment (.allocate arena (long VALTYPE))]
     {:params (mapv (fn [i]
                      (invoke (:ft-param-nth api) ft (long i) pp lp vt)
-                     (let [n (read-name pp lp) k (kind)]
+                     (let [n (read-name pp lp)
+                           t (valtype->tree api arena vt)]
                        (invoke (:vt-delete api) vt)
-                       [n k]))
+                       [n t]))
                    (range np))
      :result (when (invoke (:ft-result api) ft vt)
-               (let [k (kind)] (invoke (:vt-delete api) vt) k))}))
+               (let [t (valtype->tree api arena vt)]
+                 (invoke (:vt-delete api) vt)
+                 t))}))
 
 (defn- export-fn
   "Builds the callable for one export. The argument buffer is allocated once
@@ -300,9 +527,9 @@
    (`0014` E)."
   [api ^Arena arena ^MemorySegment ctx ^MemorySegment f sig
    ^AtomicBoolean closed ^AtomicBoolean in-call nm]
-  (let [ptypes  (mapv second (:params sig))
+  (let [ptypes  (mapv (comp lower-fn second) (:params sig))
         n       (count ptypes)
-        rtype   (:result sig)
+        rlift   (some-> (:result sig) lift-fn)
         args    ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))
         res     ^MemorySegment (.allocate arena (long VAL))
         ;; A confined arena per call would be safer for strings, but nothing
@@ -321,15 +548,15 @@
       (try
         (with-open [scratch (Arena/ofConfined)]
           (dotimes [i n]
-            (let [seg (.asSlice args (long (* VAL i)) (long VAL))
-                  k   (nth ptypes i)
-                  v   (nth vs i)]
-              (if (= :string k)
-                (lower-string! scratch seg v)
-                (lower! seg k v))))
+            ((nth ptypes i) scratch (.asSlice args (long (* VAL i)) (long VAL)) (nth vs i)))
           (ok! (str "call " nm) (invoke call! f ctx args (long n) res (long 1)))
-          (let [out (when rtype (lift res rtype))]
-            (invoke (:val-delete api) res)
+          ;; No val_delete on `res`. Its header says it "will deallocate the
+          ;; contents of the value but not the value pointer itself", and on a
+          ;; result or variant — the two kinds carrying a payload pointer — the
+          ;; *second* call then aborts the JVM in a wasmtime panic that cannot
+          ;; unwind. wasmtime recycles its own result allocation: 300k calls
+          ;; grow RSS by less than the same number of scalar calls do.
+          (let [out (when rlift (rlift res))]
             out))
         (finally (.set in-call false))))))
 
@@ -365,16 +592,16 @@
                     (range cnt))
         fns   (into {}
                     (map (fn [[nm sig]]
-                           (let [unsupported (remove SUPPORTED
-                                                     (cons (:result sig)
-                                                           (map second (:params sig))))]
-                             [nm (if (seq (remove nil? unsupported))
+                           (let [bad (distinct (mapcat unsupported
+                                                       (cons (:result sig)
+                                                             (map second (:params sig)))))]
+                             [nm (if (seq bad)
                                    (fn [& _]
                                      (throw (ex-info
                                              (str nm " uses a type cljwit.host cannot marshal yet")
                                              {:cljwit/error :unsupported-type
                                               :cljwit/export nm
-                                              :cljwit/kinds (vec (remove nil? unsupported))})))
+                                              :cljwit/kinds (vec bad)})))
                                    (let [eidx (invoke (:export-index api) inst ctx
                                                       MemorySegment/NULL
                                                       (cstr arena nm) (long (count (.getBytes ^String nm "UTF-8"))))

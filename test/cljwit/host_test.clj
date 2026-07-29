@@ -104,3 +104,40 @@
             (.close e)
             (is (nil? (.close e)))))
         (finally (.delete ^File c))))))
+
+(deftest aggregates-round-trip
+  (with-echo
+    (fn [i]
+      (testing "the nested type has to come from reflection, not a hard-coded kind"
+        (is (= {:params [["v" {:kind :list :element :u32}]]
+                :result {:kind :list :element :u32}}
+               (host/signature i "echo-list-u32")))
+        (is (= {:params [["v" {:kind :record
+                               :fields [["n" :u32] ["label" :string]]}]]
+                :result {:kind :record :fields [["n" :u32] ["label" :string]]}}
+               (host/signature i "echo-pair")))
+        (is (= [["circle" :f64] ["square" :u32] ["point" nil]]
+               (:cases (:result (host/signature i "echo-shape"))))))
+
+      (testing "0012's rows, through the public API"
+        (is (= :red ((:echo-colour i) :red)))
+        (is (= :blue ((:echo-colour i) :blue)))
+        (is (= 42 ((:echo-option-u32 i) 42)))
+        (is (nil? ((:echo-option-u32 i) nil)))
+        (is (= [:ok 7] ((:echo-result i) [:ok 7])))
+        (is (= [:err "boom"] ((:echo-result i) [:err "boom"])))
+        (is (= [:circle 1.5] ((:echo-shape i) [:circle 1.5])))
+        (is (= [:square 9] ((:echo-shape i) [:square 9])))
+        (is (= [:point] ((:echo-shape i) [:point])))
+        (is (= [1 2 3] ((:echo-list-u32 i) [1 2 3])))
+        (is (= [] ((:echo-list-u32 i) [])))
+        (is (= (vec (range 100)) ((:echo-list-u32 i) (vec (range 100)))))
+        (is (= {:n 7 :label "hi"} ((:echo-pair i) {:n 7 :label "hi"})))
+        (is (= {:n 4294967295 :label "日本語"}
+               ((:echo-pair i) {:n 4294967295 :label "日本語"}))))
+
+      (testing "L1 — nesting collapses, as 0012 says it must"
+        ;; option<option<u32>> has three inhabitants and nil/value has two, so
+        ;; `some(none)` cannot be expressed. Asserted rather than hidden.
+        (is (nil? ((:echo-option-option-u32 i) nil)))
+        (is (= 5 ((:echo-option-option-u32 i) 5)))))))

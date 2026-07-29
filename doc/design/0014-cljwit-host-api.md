@@ -1,7 +1,8 @@
 # 0014 — `cljwit.host`'s API
 
-**Status:** proposed · 2026-07-30 · no code exists yet, which is the point of
-writing this now
+**Status:** accepted · 2026-07-30 · written before any code existed, which is
+the point; implemented in `src/cljwit/host.clj`, and E is amended below by what
+the implementation found
 
 ## The question
 
@@ -76,9 +77,18 @@ It guards **every** entry, not only calls: `close`, and dropping a lifted
 ### E. Arguments reuse a buffer; results are lifted eagerly and never retained
 
 A result payload is **invalid after the next call on that function**. So every
-call fully lifts its result into JVM-owned values before returning, calls
-`wasmtime_component_val_delete`, and hands out nothing backed by the buffer. A
-lifted `own<T>` needs `wasmtime_component_resource_any_clone` to outlive it.
+call fully lifts its result into JVM-owned values before returning and hands
+out nothing backed by the buffer. A lifted `own<T>` needs
+`wasmtime_component_resource_any_clone` to outlive it.
+
+**It must *not* call `wasmtime_component_val_delete` on a result wasmtime
+produced.** Amended 2026-07-30, after the first implementation: that function
+"will deallocate the contents of the value but not the value pointer itself",
+and on a `result` or `variant` — the two kinds carrying a payload pointer — the
+*second* call aborts the JVM in a wasmtime panic that cannot unwind. Every
+single call succeeds, so nothing short of calling twice finds it. wasmtime
+recycles its own result allocation: measured, 300k `result` calls grow RSS by
+3.3 MB against 7.9 MB for the same number of scalar calls.
 
 Argument buffers are built once per export and reused, which is safe for the
 same reason `0013` gives: the values are written immediately before the call.
@@ -168,6 +178,8 @@ just makes it a rule rather than an accident.
 - **Retaining result buffers.** The first draft of E, justified by a "5–10% of
   a call" figure that **no measurement in this repo supports**. Rejected on
   correctness before cost.
+- **Freeing the result with `val_delete`.** What E said to do until the
+  implementation aborted the JVM on the second call. See above.
 
 ## What would falsify this
 
