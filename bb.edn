@@ -77,6 +77,26 @@
                          (println "S0 not written yet — bench/s0/README.md is its contract")
                          :else (apply run "bb" "bench/s0/run.clj" *command-line-args*)))}
 
+  spike-host  {:doc  "S1 spike: call a Wasm component from the JVM through FFM. Needs `nix develop`."
+               :task (let [need (remove fs/which ["wasm-tools" "clojure"])]
+                       (cond
+                         (seq need)
+                         (do (println (str "needs: " (str/join ", " need))) (System/exit 1))
+                         (not (System/getenv "CLJWIT_WASMTIME_LIB"))
+                         (do (println "CLJWIT_WASMTIME_LIB is unset — run inside `nix develop`")
+                             (System/exit 1))
+                         :else
+                         (do ;; Built here rather than committed: it is a build
+                             ;; output, and building it is also a check that the
+                             ;; toolchain still produces what the spike expects.
+                             (run "wasm-tools" "parse" "dev/resources/add.wat" "-o" "/tmp/cljwit-add.core.wasm")
+                             (run "wasm-tools" "component" "embed" "dev/resources/add.wit"
+                                  "/tmp/cljwit-add.core.wasm" "-o" "/tmp/cljwit-add.embed.wasm")
+                             (run "wasm-tools" "component" "new" "/tmp/cljwit-add.embed.wasm"
+                                  "-o" "dev/resources/add.component.wasm")
+                             (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
+                                  "-M:dev" "-m" "cljwit.spike.component-call"))))}
+
   ;; The gate prints its own wall time on purpose. When it drifts past ~60s the
   ;; push-time hook stops being a good trade — and this is how that becomes
   ;; visible, without a rule anyone has to remember to read.

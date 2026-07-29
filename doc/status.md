@@ -7,16 +7,23 @@ _Short by design, and printed at every session start — so findings live in
 
 ## Next
 
-**S1's premise is checked** (`0005`, surveyed 2026-07-30): wasmtime's C API
+**S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
+component and calls it from the JVM through FFM — engine, store, component,
+linker, instantiate, export lookup, call — returning 42. The flake now exports
+`CLJWIT_WASMTIME_LIB` so no committed file carries a machine-specific path;
+how a *shipped* library finds the shared object is still open.
+
+Behind that (`0005`, surveyed 2026-07-30): wasmtime's C API
 gained the component model between v40 and v43 — 0 exported
 `wasmtime_component_*` symbols at 40.0.2, 154 at the pinned 47.0.1 — and the
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Get a value across the boundary from the JVM.** Symbol resolution proves
-   reachability, not a working call. This is S1's first real unit, and it will
-   force the open question `0005` now records: how `cljwit.host` locates
-   `libwasmtime` without a machine-specific path.
+1. **Decide how `cljwit.host` makes its calls** — `0011`'s open question and
+   the one that decides whether the library can be pure Clojure. Clojure cannot
+   reach `MethodHandle.invokeExact`, so the spike boxes every argument through
+   `invokeWithArguments`. Measure that cost before designing the API around it;
+   the alternatives are emitting bytecode with static call sites, or a C shim.
 2. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
