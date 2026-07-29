@@ -41,6 +41,14 @@ then find out.
 
 - Nothing yet.
 
+## Verified
+
+- **A cold-start session works.** A fresh agent with no prior context, given
+  only `/next`, correctly identified the project, the current stage, that the
+  compiler does not exist, and that the next action is to record S0 predictions
+  before writing `b1_protocol.wat` — including the roadmap's warning about
+  skipping S0. Re-run this check after any change to `.claude/`.
+
 ## Incidents so far
 
 - **2026-07-29 — the gate passed locally and failed in CI.** `src/` and `test/`

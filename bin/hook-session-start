@@ -13,3 +13,4 @@ if [ -f doc/status.md ]; then
 fi
 printf '\n=== recent commits ===\n'
 git log -5 --oneline --decorate 2>/dev/null || true
+printf '\n=== how to proceed ===\nRun /next. It is the single entry point: orient, choose, work, land, repeat.\n'

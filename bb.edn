@@ -5,7 +5,8 @@
  :tasks
  {:requires ([babashka.fs :as fs]
              [babashka.process :as p]
-             [clojure.string :as str])
+             [clojure.string :as str]
+             [cheshire.core :as json])
 
   ;; A failing task reports the tool's own output plus one line, not a babashka
   ;; stack trace — the trace buries the part you actually need.
@@ -16,6 +17,23 @@
             (when-not (zero? exit)
               (println (str "\n✗ failed: " (str/join " " args)))
               (System/exit exit)))))
+
+  ref         {:doc  "Clone/refresh reference sources into .ref/ (see refs.json). `bb ref clojure` for one."
+               :task (let [want (first *command-line-args*)
+                           refs (get (json/parse-string (slurp "refs.json")) "refs")
+                           refs (if want (select-keys refs [want]) refs)]
+                       (when (empty? refs)
+                         (println "unknown ref. known:" (str/join ", " (keys (get (json/parse-string (slurp "refs.json")) "refs"))))
+                         (System/exit 1))
+                       (fs/create-dirs ".ref")
+                       (doseq [[name {:strs [url why]}] refs
+                               :let [dir (str ".ref/" name)]]
+                         (if (fs/exists? dir)
+                           (do (print (format "%-16s updating... " name)) (flush)
+                               (run "git" "-C" dir "pull" "--ff-only" "--depth" "50" "-q"))
+                           (do (println (format "%-16s %s" name why))
+                               (run "git" "clone" "--depth" "50" "-q" url dir)))
+                         (println (format "%-16s ok  %s" name dir))))}
 
   check-tools {:doc  "Verify the local toolchain against tools.json"
                :task (run "bin/check-tools")}

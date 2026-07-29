@@ -10,6 +10,9 @@ benchmarks that decide whether the design is viable at all. Acting as if the
 project were further along than `doc/status.md` says is the main way to waste
 time here.
 
+**`/next` is the entry point.** It takes you from a cold start to a landed
+change; run it at the start of a session and after every change.
+
 ## Durable state lives in three files
 
 Everything that must survive a session is committed, public, and in one of:
@@ -57,7 +60,10 @@ A change is done when all of these hold. *How* you get there is yours to choose.
 ## What is mechanized (don't re-implement it in prose)
 
 - `bb check` — the gate. `bb tasks` lists every sanctioned entry point.
-- Session start prints `doc/status.md` and recent commits.
+- `bb ref` — clones the reference sources (Clojure, ClojureScript, the sibling
+  projects) into `.ref/`. Never assume they exist on a path.
+- Session start prints `doc/status.md`, recent commits, and points at `/next`.
+- The gate reports its own wall time, so "it got slow" surfaces by itself.
 - CI runs `bb check` and nothing else, so the local gate cannot drift from it.
 
 **Add machinery when a specific failure has happened twice — not in

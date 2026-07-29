@@ -48,12 +48,19 @@ route to the agent. Anything that must happen regardless is a hook.
 | session start | `doc/status.md` + last 5 commits, with a staleness warning | the agent cannot choose work without knowing where things stand |
 | editing `doc/design/**` | `.claude/rules/design_notes.md` | the format matters exactly when writing one |
 | editing `bench/**` | `.claude/rules/measurement.md` | measurement discipline matters exactly when measuring |
+| `/next`, and every session start (the hook says to run it) | `.claude/skills/next/` | the loop: orient, choose, work, review, land, repeat — plus the failure modes this project actually has |
 | on demand / when the model judges it relevant | `.claude/skills/wat/` | detailed toolchain invocations; too long for always-on, needed only in the WAT loop |
 | before `git push` | `bb check` runs; a red gate blocks the push | the one thing that must not depend on remembering |
 
-`measurement.md` points at the `wat` skill, so the deterministic path trigger
-surfaces the on-demand one. Skill auto-triggering is a model judgement; the
-path rule is not.
+Skill auto-triggering is a model judgement, so every skill has a deterministic
+path to it as well: the session-start hook prints "run /next", and
+`measurement.md` (path-triggered on `bench/**`) points at the `wat` skill. A
+skill that can only be reached by the model deciding it is relevant will
+sometimes not be reached.
+
+`/next` is deliberately the *only* entry point. One command that always applies
+beats several that each apply sometimes, because choosing between them is
+itself a decision the model can get wrong at the worst moment — a cold start.
 
 ## What we deliberately did not build
 
