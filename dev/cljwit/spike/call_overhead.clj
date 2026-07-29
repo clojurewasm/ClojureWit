@@ -19,7 +19,10 @@
                            scale. The others only matter relative to this.
 
    `abs` stands in for a trivial native callee: one int in, one int out, no
-   allocation, so what is measured is the call mechanism rather than the work."
+   allocation, so what is measured is the call mechanism rather than the work.
+   The argument varies with the loop index — with a constant, a sufficiently
+   clever JIT could fold the whole call away and the fast path would look
+   free for the wrong reason."
   (:require [clojure.java.io :as io])
   (:import [java.lang.foreign Arena FunctionDescriptor Linker MemorySegment
             SymbolLookup ValueLayout]
@@ -113,7 +116,7 @@
                (timed (fn [^long k]
                         (loop [i 0 acc 0]
                           (if (< i k)
-                            (recur (inc i) (unchecked-add acc (long (.invokeWithArguments abs-h ^java.util.List [(int -7)]))))
+                            (recur (inc i) (unchecked-add acc (long (.invokeWithArguments abs-h ^java.util.List [(int (- i))]))))
                             acc)))
                       n 21 5)
 
@@ -121,7 +124,7 @@
                (timed (fn [^long k]
                         (loop [i 0 acc 0]
                           (if (< i k)
-                            (recur (inc i) (unchecked-add acc (long (.call abs-p (int -7)))))
+                            (recur (inc i) (unchecked-add acc (long (.call abs-p (int (- i))))))
                             acc)))
                       n 21 5)
 

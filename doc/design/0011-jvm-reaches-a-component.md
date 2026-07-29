@@ -80,21 +80,23 @@ better, and both other predictions were too optimistic by 2.5× or more.)*
 
 | | ns per call |
 |---|---|
-| `invokeWithArguments`, trivial native call | **400** |
-| **interface proxy**, same call | **6.2** |
-| component call `add(s32,s32) -> s32` | **2471** |
-| …with `post_return` | 3126 |
+| `invokeWithArguments`, trivial native call | **396** |
+| **interface proxy**, same call | **7.7** |
+| component call `add(s32,s32) -> s32` + `post_return` | **2880** |
 
-**1. Pure Clojure has a fast path, and it is 63× the reflective one.**
+**1. Pure Clojure has a fast path, and it is 51× the reflective one.**
 `MethodHandleProxies/asInterfaceInstance` behind a `definterface` gives a
-static call site at **6.2 ns**, against 400 for `invokeWithArguments`. So
+static call site at **7.7 ns**, against 396 for `invokeWithArguments`. The
+argument varies with the loop index, so neither path is a folded constant —
+with a fixed argument the proxy measured 6.2 ns, and the difference is the
+check working. So
 constraint (1) above does **not** force bytecode generation or a C shim, which
 is what it looked like before anyone measured. `cljwit.host` can be pure
 Clojure.
 
 **2. But that is not where the time goes.** A scalar component call costs
-**2471 ns** — the prediction said 200–1000 — so the 400 ns of boxing is about
-**16%** of it. Removing the boxing entirely buys a sixth. The dominant cost is
+**~2.5–2.9 µs** — the prediction said 200–1000 ns — so the 396 ns of boxing is
+around **14%** of it. Removing the boxing entirely buys a sixth. The dominant cost is
 wasmtime's component call itself.
 
 **3. And that cost is structural, not a mistake in the spike.** Omitting

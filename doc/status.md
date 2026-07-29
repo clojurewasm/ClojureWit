@@ -9,9 +9,9 @@ _Short by design, and printed at every session start — so findings live in
 
 **The calling convention is decided and the cost structure is measured**
 (`0011`): `MethodHandleProxies/asInterfaceInstance` behind a `definterface`
-gives a static call site at **6.2 ns** against `invokeWithArguments`' 400, so
+gives a static call site at **7.7 ns** against `invokeWithArguments`' 396, so
 **`cljwit.host` can be pure Clojure** — no bytecode generation, no C shim. But
-a scalar component call costs **2471 ns**, so that boxing was only ~16% of it.
+a scalar component call costs **~2.9 µs**, so that boxing is only ~14% of it.
 The C API offers only the dynamic call path; there is no typed equivalent of
 the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
 payloads under ~30 KB the call dominates the copy.**
