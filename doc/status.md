@@ -86,7 +86,7 @@ is unmeasured.** That is S0's residue and it belongs to S3.
 
 ## Incidents so far
 
-Six on 2026-07-29, the day the repo started. Each is written up where it
+Seven, all on 2026-07-29/30 — the first two days. Each is written up where it
 changed something; this is the index.
 
 - **The gate passed locally and failed in CI** — empty `src/` and `test/` that
@@ -103,6 +103,12 @@ changed something; this is the index.
   `doc/design/0007-*` carries the correction.
 - **Two design conclusions drawn from one-variable experiments** — `0009`'s rec
   group and `0003`'s runtime table — both corrected in place.
+- **A dev-shell convenience took CI from ~50s to ~20min.** `git` was added to
+  `flake.nix` so `bb ref` would work inside the shell, and it drags perl and its
+  documentation into the closure. `gitMinimal` is the fix. **Nothing caught
+  it**: the local gate reports its own wall time and stayed at ~1s, because the
+  cost was entirely in fetching the shell. The second "green locally, different
+  on CI" incident, after the untracked empty directories.
 
 **Four of the six are the same failure**: generalising from an experiment that
 varied more than one thing. The rule for it was added the same day and did not
