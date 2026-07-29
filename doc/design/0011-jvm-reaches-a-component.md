@@ -223,6 +223,54 @@ API, and the lever is the Rust API's typed component calls behind a shim.
 That makes the next question concrete rather than a matter of preference:
 **can `call_unchecked` be driven correctly, and does it collapse the 1.57 µs?**
 
+The header settles the first half — *"This function is faster than that
+function"* — and the contract is exactly what the old spike did: a
+`wasmtime_val_raw_t[]` with arguments from index 0, results overwriting them,
+length `max(nargs, nresults)`. So the old "2.4× slower" was contamination, not
+misuse, and it only needed the clean harness.
+
+**Prediction, 2026-07-30, before the run.** `call_unchecked` lands at
+**1.2–1.4 µs** — a 10–25% improvement — because the bulk of a host-to-wasm call
+is store entry, the trampoline and stack-limit setup rather than `Val`
+marshalling. **Falsified if it drops below ~500 ns**, which would mean
+marshalling was most of the 1.57 µs and a typed component path is the whole
+answer rather than a modest one.
+
+### The answer is no, and it contradicts the documentation
+
+| ns/call | run 1 | run 2 | spread within a run |
+|---|---|---|---|
+| core call, **checked** | 1561.5 | 1681.7 | 1.01× / 1.02× |
+| core call, **unchecked** | **4732.8** | **4690.5** | 1.02× / 1.02× |
+| component call | 1907.5 | 2012.9 | 1.03× / 1.01× |
+
+**`call_unchecked` is 3× slower than the checked path**, reproducibly, in the
+clean harness — 1.02× within-run spread and 1% between runs, so this is not the
+contamination that made the first attempt untrustworthy. The result survived
+the fix that was supposed to explain it away.
+
+The header says the opposite in as many words: it describes the unchecked path
+as the faster one and the checked one as the safe default. The usage matches
+the documented contract — `wasmtime_val_raw_t[]`, arguments from index 0,
+results overwriting them, length `max(nargs, nresults)` — and the call returns
+the right answer every time.
+
+**Recorded as an open contradiction between documentation and measurement, not
+explained.** Either the C API's unchecked path carries a cost the header does
+not describe, or there is a precondition it does not state. Reading
+`crates/c-api` in the wasmtime source (`bb ref wasmtime`) is the next step and
+has not been taken.
+
+**What it settles regardless:** `call_unchecked` is not the lever. The checked
+path at ~1.6 µs is the fastest thing this C API offers, the component path is
+~1.9 µs, and **the ~355 ns the Component Model adds remains the only part of
+the cost this project could remove by changing its own choices.** If ~1.9 µs is
+too slow for what `cljwit.host` is for, the lever is outside the C API
+entirely — the Rust API's typed calls behind a shim.
+
+The prediction was wrong, and not in the direction its own falsifier named: it
+predicted an improvement and got a 3× regression.
+
 ## Why this shape
 
 The alternative was to design `cljwit.host`'s API first and discover these while

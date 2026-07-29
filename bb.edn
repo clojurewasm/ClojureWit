@@ -106,7 +106,7 @@
                                 "-o" "dev/resources/add.core.wasm")
                            ;; A fresh JVM per path: the previous attempt measured
                            ;; them together and they contaminated each other.
-                           (doseq [p ["trivial" "core" "component"]]
+                           (doseq [p ["trivial" "core" "core-raw" "component"]]
                              (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
                                   "-M:dev" "-m" "cljwit.spike.call-cost" p))))}
 

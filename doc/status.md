@@ -21,8 +21,10 @@ enough to quote — two runs agreeing to 0.2%, within-run spread 1.03× (`0011`)
 | **wasmtime's core call itself** | **1567** | **81%** |
 
 **The binding is free and the Component Model is modest; one call into wasmtime
-is the cost.** That is the checked path — the core C API has
-`wasmtime_func_call_unchecked` and the component API has no equivalent.
+is the cost.** And `wasmtime_func_call_unchecked`, which the header calls the
+faster path, measures **3× slower** — reproducibly, in the clean harness. That
+contradiction is open and recorded; it changes nothing, because unchecked is
+not the lever either way.
 The C API offers only the dynamic call path; there is no typed equivalent of
 the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
 payloads under ~30 KB the call dominates the copy.**
@@ -39,16 +41,20 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Can `wasmtime_func_call_unchecked` be driven correctly, and does it
-   collapse the 1.57 µs?** The earlier attempt measured it 2.4× *slower* than
-   the checked path, which cannot be right, so it was being used wrongly. If
-   the checked path is what costs, and components can only be called checked,
-   then ~1.9 µs is the floor through this C API and the lever is the Rust
-   API's typed component calls behind a shim. Concrete and testable.
-2. **Design `cljwit.host`'s API**, now that the calling convention is decided
+1. **Why is `wasmtime_func_call_unchecked` 3× *slower* than the checked path?**
+   Reproduced in the clean harness (1.02× spread, 1% between runs), so it is
+   not measurement noise — and the header states the opposite. Reading
+   `crates/c-api` in the wasmtime source (`bb ref wasmtime`) is the next step.
+   It does not block anything: unchecked is not the lever either way, and
+   ~1.9 µs stands as the component-call cost through this C API.
+2. **Decide whether ~1.9 µs is acceptable for what `cljwit.host` is for.** The
+   only part this project can remove by its own choices is the ~355 ns the
+   Component Model adds; the rest is outside the C API, and the lever there is
+   the Rust API's typed calls behind a shim.
+3. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).
-3. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+4. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.

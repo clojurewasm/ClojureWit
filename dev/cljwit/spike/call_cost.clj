@@ -11,13 +11,13 @@
      timed as if it succeeded;
      one path per JVM — `bb spike-cost` runs it once per path.
 
-   `wasmtime_func_call_unchecked` is deliberately absent. It measured 2.4×
-   slower than the checked path in all three old runs, which cannot be right
-   for a raw path, so it was being used incorrectly. An arm nobody can explain
-   does not belong in a table.
+   `wasmtime_func_call_unchecked` is back. It measured 2.4× *slower* than the
+   checked path in the contaminated harness, which the header rules out (it
+   states plainly that the unchecked path is the faster one), so that was the
+   contamination rather than misuse.
 
    Usage: `bb spike-cost` — or `clojure -M:dev -m cljwit.spike.call-cost <path>`
-   with one of: trivial, core, component."
+   with one of: trivial, core, core-raw, component."
   (:require [clojure.java.io :as io])
   (:import [java.lang.foreign Arena FunctionDescriptor Linker MemorySegment
             SymbolLookup ValueLayout]
@@ -33,6 +33,12 @@
    [^java.lang.foreign.MemorySegment f ^java.lang.foreign.MemorySegment cx
     ^java.lang.foreign.MemorySegment args ^long nargs
     ^java.lang.foreign.MemorySegment res ^long nres]))
+
+(definterface CoreRawCall
+  (^java.lang.foreign.MemorySegment call
+   [^java.lang.foreign.MemorySegment cx ^java.lang.foreign.MemorySegment f
+    ^java.lang.foreign.MemorySegment argsres ^long n
+    ^java.lang.foreign.MemorySegment trap]))
 
 (definterface CoreCall
   (^java.lang.foreign.MemorySegment call
@@ -123,12 +129,12 @@
                           acc)))
                     2000000 21 5))
 
-          ("core" "component")
+          ("core" "core-raw" "component")
           (let [engine (setup-call (fx "wasm_engine_new" ADDR))
                 store  (setup-call (fx "wasmtime_store_new" ADDR ADDR ADDR ADDR)
                                    engine MemorySegment/NULL MemorySegment/NULL)
                 ctx    (setup-call (fx "wasmtime_store_context" ADDR ADDR) store)]
-            (if (= path "core")
+            (if (#{"core" "core-raw"} path)
               (let [b     (slurp-wasm "dev/resources/add.core.wasm")
                     mout  (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
                     _     (ok! "module_new" (setup-call (fx "wasmtime_module_new" ADDR ADDR ADDR I64 ADDR)
@@ -151,16 +157,33 @@
                             (let [base (long (* i 32))]
                               (.set args I8 base (byte 0))     ; WASMTIME_I32
                               (.set args I32 (+ base 8) (int v))))
-                    p ^CoreCall (MethodHandleProxies/asInterfaceInstance
-                                 CoreCall (fx "wasmtime_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64 ADDR))]
-                (report "core module call (proxy)"
-                        (fn [^long k]
-                          (loop [i 0 acc 0]
-                            (if (< i k)
-                              (do (ok! "func_call" (.call p ctx f args 2 res 1 trap))
-                                  (recur (inc i) (unchecked-add acc (long (.get res I32 (long 8))))))
-                              acc)))
-                        200000 21 5))
+                    ;; val_raw is a bare 16-byte union; arguments start at index
+                    ;; 0 and the results overwrite them, so the array is
+                    ;; max(nargs, nresults) elements.
+                    raw   ^MemorySegment (.allocate arena (long 32))
+                    p     ^CoreCall (MethodHandleProxies/asInterfaceInstance
+                                     CoreCall (fx "wasmtime_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64 ADDR))
+                    pr    ^CoreRawCall (MethodHandleProxies/asInterfaceInstance
+                                        CoreRawCall (fx "wasmtime_func_call_unchecked" ADDR ADDR ADDR ADDR I64 ADDR))]
+                (if (= path "core")
+                  (report "core module call, checked (proxy)"
+                          (fn [^long k]
+                            (loop [i 0 acc 0]
+                              (if (< i k)
+                                (do (ok! "func_call" (.call p ctx f args 2 res 1 trap))
+                                    (recur (inc i) (unchecked-add acc (long (.get res I32 (long 8))))))
+                                acc)))
+                          200000 21 5)
+                  (report "core module call, unchecked (proxy)"
+                          (fn [^long k]
+                            (loop [i 0 acc 0]
+                              (if (< i k)
+                                (do (.set raw I32 (long 0) (int 17))
+                                    (.set raw I32 (long 16) (int 25))
+                                    (ok! "func_call_unchecked" (.call pr ctx f raw 2 trap))
+                                    (recur (inc i) (unchecked-add acc (long (.get raw I32 (long 0))))))
+                                acc)))
+                          200000 21 5)))
 
               (let [b     (slurp-wasm "dev/resources/add.component.wasm")
                     cout  (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
