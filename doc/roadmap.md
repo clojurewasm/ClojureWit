@@ -68,12 +68,26 @@ stage's verdict is `doc/design/0010-*`.
 
 ### S1 — `cljwit.host`: call Wasm from JVM Clojure (weeks)
 
-A plain Clojure library. No dialect, no compiler. `require` a component as a
-namespace and call it.
+A plain Clojure library. No dialect, no compiler.
 
 This exists first for three reasons: it is **useful on its own**, it forces the
 **WIT ↔ Clojure type mapping** (the hardest shared problem) to be solved once,
 and it makes the project real to people before the compiler exists.
+
+**Amended 2026-07-30.** This stage was stated as "`require` a component as a
+namespace and call it". That surface is **deferred** (`0015`): Clojure has no
+compile-time arity check for a var call, `clj-kondo` cannot see a macro's
+interned vars, and a top-level macro cannot skip itself, so it would take the
+gate red outside `nix develop`. When it is built it should be a generated
+`.clj`, not a macro. The primitive underneath it — a reflected handle whose
+exports are ordinary functions — is what S1 delivers instead (`0014`).
+
+**Stop condition.** A component this project did not author, calling and being
+called, with every WIT type a shipped release can express. Two of the three
+hold: `dev/resources/zoo.wit` is the un-authored component, and `0012`'s rows
+are marshalled in both directions except `map`, `list<T,N>`, `stream`/`future`
+and `error-context`, none of which are in a shipped release. Host imports are
+the third (`0017`).
 
 ### S2 — Developer experience skeleton (weeks)
 
