@@ -1,0 +1,353 @@
+;; B2 — the same vtable-slot dispatch as B1, with ten receiver types at one site.
+;;
+;; This is where doc/design/0004-dispatch-design.md's actual claim lives. B1's
+;; JVM baseline is a monomorphic site that C2 devirtualises completely — the
+;; case protocols are supposed to lose. Here the JVM's per-call-site cache has
+;; ten classes to hold and one slot to hold them in, while a vtable slot has no
+;; cache to thrash. The prediction, recorded before the run, is that we win.
+;;
+;; The ring is 11 nodes over 10 types (node i has type i mod 10), which keeps
+;; the ring length prime -- the driver refuses an n whose expected answer is
+;; also what an empty loop returns.
+;;
+;; **Compare B2 against bench_mono in this module, not against B1.** Ten types
+;; need a shared supertype to carry $nxt/$tag, which puts these objects one
+;; level deeper than B1's, so B1 and B2 differ in two things. bench_mono is
+;; B1's shape rebuilt inside B2's type graph -- eleven nodes, all one type --
+;; leaving receiver count as the only variable.
+;;
+;; A lead for B4, stated as a question because it is not yet isolated: an
+;; earlier control here walked the *mixed* ring through a callee casting to the
+;; shared supertype, and cost 6.7ns on wasmtime where the present one costs
+;; 2.33. Two things differ between those (which ring, and which type is cast
+;; to), so that gap attributes to neither. If it is the *variety of input
+;; types* a ref.cast sees rather than the hierarchy depth, B4 is measuring the
+;; wrong axis.
+
+(module
+  (rec
+    (type $fn1 (func (param (ref null $obj)) (result (ref null $obj))))
+    (type $vt1 (array (ref null $fn1)))
+    (type $vtables (struct (field $a1 (ref $vt1))))
+    (type $obj (sub (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1)))))
+    ;; Carries the fields the walk needs, so the ring can be built and read
+    ;; without knowing which of the ten concrete types it is holding.
+    (type $node (sub $obj (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T0 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t0 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T1 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t1 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T2 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t2 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T3 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t3 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T4 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t4 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T5 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t5 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T6 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t6 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T7 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t7 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T8 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t8 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32)))))
+    ;; T9 — structurally identical to its siblings on purpose. Position in the
+    ;; rec group is what makes them distinct types (verified 2026-07-29), so the
+    ;; call site sees ten receivers that differ in nothing but identity.
+    (type $t9 (sub $node (struct
+      (field $hash (mut i32))
+      (field $vt (ref $vtables))
+      (field $slot0 (ref null $fn1))
+      (field $nxt (mut (ref null $obj)))
+      (field $tag (mut i32))))))
+
+  (global $ring-head (mut (ref null $obj)) (ref.null $obj))
+  ;; A second ring of eleven nodes that are all $t0 — same module, same type
+  ;; graph, same hierarchy depth, one receiver type. B2 minus this is the cost
+  ;; of megamorphism with everything else held fixed. Comparing B2 against B1
+  ;; instead would vary two things, because B1's objects sit one level shallower.
+  (global $mono-head (mut (ref null $obj)) (ref.null $obj))
+
+  (elem declare func $m0 $m1 $m2 $m3 $m4 $m5 $m6 $m7 $m8 $m9)
+
+  ;; Ten protocol methods, one per type, each casting to its own type as a real
+  ;; implementation would. Ten distinct call targets is the point: if they were
+  ;; one function the site would be monomorphic in target however many receiver
+  ;; types it saw.
+  (func $m0 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t0 $nxt (ref.cast (ref $t0) (local.get $this))))
+
+  (func $m1 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t1 $nxt (ref.cast (ref $t1) (local.get $this))))
+
+  (func $m2 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t2 $nxt (ref.cast (ref $t2) (local.get $this))))
+
+  (func $m3 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t3 $nxt (ref.cast (ref $t3) (local.get $this))))
+
+  (func $m4 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t4 $nxt (ref.cast (ref $t4) (local.get $this))))
+
+  (func $m5 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t5 $nxt (ref.cast (ref $t5) (local.get $this))))
+
+  (func $m6 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t6 $nxt (ref.cast (ref $t6) (local.get $this))))
+
+  (func $m7 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t7 $nxt (ref.cast (ref $t7) (local.get $this))))
+
+  (func $m8 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t8 $nxt (ref.cast (ref $t8) (local.get $this))))
+
+  (func $m9 (type $fn1) (param $this (ref null $obj)) (result (ref null $obj))
+    (struct.get $t9 $nxt (ref.cast (ref $t9) (local.get $this))))
+
+  (func $setup
+    (local $v0 (ref null $vtables))
+    (local $v1 (ref null $vtables))
+    (local $v2 (ref null $vtables))
+    (local $v3 (ref null $vtables))
+    (local $v4 (ref null $vtables))
+    (local $v5 (ref null $vtables))
+    (local $v6 (ref null $vtables))
+    (local $v7 (ref null $vtables))
+    (local $v8 (ref null $vtables))
+    (local $v9 (ref null $vtables))
+    (local $head (ref null $node))
+    (local $prev (ref null $node))
+    (local $cur (ref null $node))
+    (local.set $v0 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m0))))
+    (local.set $v1 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m1))))
+    (local.set $v2 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m2))))
+    (local.set $v3 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m3))))
+    (local.set $v4 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m4))))
+    (local.set $v5 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m5))))
+    (local.set $v6 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m6))))
+    (local.set $v7 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m7))))
+    (local.set $v8 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m8))))
+    (local.set $v9 (struct.new $vtables (array.new_fixed $vt1 1 (ref.func $m9))))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 0)))
+    (local.set $head (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t1 (i32.const 0) (ref.as_non_null (local.get $v1))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 1)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t2 (i32.const 0) (ref.as_non_null (local.get $v2))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 2)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t3 (i32.const 0) (ref.as_non_null (local.get $v3))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 3)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t4 (i32.const 0) (ref.as_non_null (local.get $v4))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 4)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t5 (i32.const 0) (ref.as_non_null (local.get $v5))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 5)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t6 (i32.const 0) (ref.as_non_null (local.get $v6))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 6)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t7 (i32.const 0) (ref.as_non_null (local.get $v7))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 7)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t8 (i32.const 0) (ref.as_non_null (local.get $v8))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 8)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t9 (i32.const 0) (ref.as_non_null (local.get $v9))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 9)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                     (ref.null $fn1) (ref.null $obj) (i32.const 10)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (struct.set $node $nxt (local.get $prev) (local.get $head))
+    (global.set $ring-head (local.get $head))
+
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 0)))
+    (local.set $head (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 1)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 2)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 3)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 4)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 5)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 6)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 7)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 8)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 9)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (local.set $cur (struct.new $t0 (i32.const 0) (ref.as_non_null (local.get $v0))
+                                    (ref.null $fn1) (ref.null $obj) (i32.const 10)))
+    (struct.set $node $nxt (local.get $prev) (local.get $cur))
+    (local.set $prev (local.get $cur))
+    (struct.set $node $nxt (local.get $prev) (local.get $head))
+    (global.set $mono-head (local.get $head)))
+
+  (start $setup)
+
+  ;; The megamorphic walk and the monomorphic one differ only in which ring
+  ;; the global points at, so they share a body.
+  (func $walk (param $n i32) (param $o (ref null $obj)) (result i32)
+    (local $i i32)
+    (local.set $i (local.get $n))
+    (block $done
+      (loop $l
+        (br_if $done (i32.eqz (local.get $i)))
+        (local.set $o
+          (call_ref $fn1
+            (local.get $o)
+            (array.get $vt1
+              (struct.get $vtables $a1 (struct.get $obj $vt (local.get $o)))
+              (i32.const 0))))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (br $l)))
+    (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
+
+  (func (export "bench_mono") (param $n i32) (result i32)
+    (call $walk (local.get $n) (global.get $mono-head)))
+
+  (func $bench (export "bench") (param $n i32) (result i32)
+    (local $o (ref null $obj))
+    (local $i i32)
+    (local.set $o (global.get $ring-head))
+    (local.set $i (local.get $n))
+    (block $done
+      (loop $l
+        (br_if $done (i32.eqz (local.get $i)))
+        (local.set $o
+          (call_ref $fn1
+            (local.get $o)
+            (array.get $vt1
+              (struct.get $vtables $a1 (struct.get $obj $vt (local.get $o)))
+              (i32.const 0))))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (br $l)))
+    (struct.get $node $tag (ref.cast (ref $node) (local.get $o))))
+
+  ;; Control for bench_mono: the SAME ring and the SAME callee ($m0, casting to
+  ;; $t0), reached by a direct call instead of through the vtable. So
+  ;; bench_mono minus bench_direct is dispatch and nothing else — the earlier
+  ;; version walked the mixed ring through a callee that cast one level
+  ;; shallower, which priced the callees against each other as well.
+  (func $bench-direct (export "bench_direct") (param $n i32) (result i32)
+    (local $o (ref null $obj))
+    (local $i i32)
+    (local.set $o (global.get $mono-head))
+    (local.set $i (local.get $n))
+    (block $done
+      (loop $l
+        (br_if $done (i32.eqz (local.get $i)))
+        (local.set $o (call $m0 (local.get $o)))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (br $l)))
+    (struct.get $node $tag (ref.cast (ref $node) (local.get $o)))))

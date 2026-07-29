@@ -13,7 +13,7 @@ first run. Do not read them until you have your own expectation.
 |---|---|---|---|
 | **B1** | `b1_protocol.wat` | vtable-slot dispatch: 3 loads + `call_ref`, monomorphic site | Whether the design is viable at all |
 | **B1L/B1i/B1c** | (same module) | controls: the same walk at 1 load, 0 loads, and no dispatch | Where in B1 the cost actually is |
-| **B2** | `b2_megamorphic.wat` | the same site with 10 receiver types | Whether we beat the JVM where its per-call-site cache thrashes |
+| **B2** | `b2_megamorphic.wat` | the same site with 10 receiver types, plus a depth-matched one-type control | Whether we beat the JVM where its per-call-site cache thrashes |
 | **B3** | `b3_arith.wat` | `i31` fast-path add vs a boxed slow path | Whether boxed arithmetic can be cheap |
 | **B4** | `b4_cast_depth.wat` | `ref.cast` at hierarchy depth 2 vs 6 | How flat the type graph has to be |
 
@@ -70,6 +70,8 @@ errors.
 
 ## Status
 
-**B1 done** — numbers and what they mean are in
-`doc/design/0002-measure-first.md`. B2, B3 and B4 are not written; this README
+**B1 and B2 done** — numbers and what they mean are in
+`doc/design/0002-measure-first.md`. B3 and B4 are not written, and B5
+(call-site specialisation) and B6 (the component boundary crossing) were added
+to the plan after B1 and `doc/design/0007-*`; see `doc/status.md`. This README
 is the contract they have to satisfy.

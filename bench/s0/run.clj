@@ -40,6 +40,27 @@
     :what "control: the same ring walk with the dispatch removed"
     :wat "bench/s0/b1_protocol.wat" :export "bench_direct"
     :jvm "s0.jvm.b1" :variant "direct"
+    :expect #(mod % 11)}
+   {:id "B2"
+    :what "the same site with ten receiver types — where the design's claim lives"
+    :wat "bench/s0/b2_megamorphic.wat" :export "bench"
+    :jvm "s0.jvm.b2" :variant "dispatch"
+    :expect #(mod % 11)}
+   ;; B1's shape rebuilt inside B2's type graph. B2 minus this is megamorphism
+   ;; with hierarchy depth held fixed; B2 minus B1 would vary both.
+   {:id "B2m"
+    :what "control: the same type graph, one receiver type — B1's shape at B2's depth"
+    :wat "bench/s0/b2_megamorphic.wat" :export "bench_mono"
+    :jvm "s0.jvm.b2" :variant "mono"
+    :expect #(mod % 11)}
+   ;; Pairs with B2m, not B2: same ring, same callee, dispatch removed. No JVM
+   ;; row, because on the JVM a "direct call" to a protocol method is an
+   ;; interface call — a different construct, and subtracting differently-built
+   ;; controls prices the controls. Whether C2 devirtualises is answered by B2
+   ;; against B2m instead.
+   {:id "B2c"
+    :what "control: the one-type ring and the same callee, called directly"
+    :wat "bench/s0/b2_megamorphic.wat" :export "bench_direct"
     :expect #(mod % 11)}])
 
 ;; --- shelling out ----------------------------------------------------------

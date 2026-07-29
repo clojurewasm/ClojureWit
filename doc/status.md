@@ -12,15 +12,16 @@ Repository, toolchain, gate, and CI are in place and verified end to end
 tools — wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0). **CI is green on a
 fresh Linux runner in 50s.**
 
-**S0 has started, B1 is measured, and it passes on one lane of two.** Under the
+**S0: B1 and B2 measured; the design passes on one lane of two.** Under the
 stop condition as rewritten on 2026-07-29 — dispatch overhead under 1 ns,
 absolute, per lane — **V8 passes at 0.13 ns and wasmtime fails at 6.08.** The
-design's shape is not refuted; its one remaining lever is now load-bearing
-rather than optional, and B5 decides. Headline numbers, ns per dispatch:
+shape is not refuted; its one remaining lever is now load-bearing rather than
+optional, and B5 decides. Headline numbers, ns per dispatch:
 
 | | JVM Clojure | V8 (node) | wasmtime |
 |---|---|---|---|
-| B1 | 1.50 | **0.87** (0.58×) | **8.43** (5.61×) |
+| B1 monomorphic | 1.50 | **0.87** (0.58×) | **8.43** (5.61×) |
+| B2 ten types | 3.24 | **1.99** (0.61×) | **9.22** (2.84×) |
 
 **V8 beats JVM Clojure outright** and its dispatch is free — speculative
 inlining reaches us, as `doc/design/0003-*` hoped. **wasmtime pays 6.1 ns**, and
@@ -89,27 +90,32 @@ and `.claude/skills/wat` asserted the opposite until it was measured.
 
 ## Next
 
-**S0 — B2, B3, B4.** Same contract, `bench/s0/README.md`; run them with
+**S0 — B5, then B3 and B4.** Same contract, `bench/s0/README.md`; run them with
 `bb bench-s0`. Predictions for all four are already recorded in
 `doc/design/0002-measure-first.md` and must not be edited.
 
 | | Measures | Decides |
 |---|---|---|
 | ~~B1~~ | ~~vtable-slot protocol dispatch~~ | **done** — V8 passes, wasmtime fails |
-| B2 | the same site with 10 receiver types | whether we beat the JVM where it hurts |
+| ~~B2~~ | ~~the same site with 10 receiver types~~ | **done** — mechanism confirmed, V8 0.61× JVM, wasmtime 2.84× |
 | B3 | `i31` inline arithmetic | whether boxed math can be cheap |
 | B4 | `ref.cast` cost vs type-hierarchy depth | how to shape the type graph |
 
-B2 is next and is the highest-value of the three: B1's JVM baseline is a
-monomorphic site the JIT appears to devirtualise entirely, which is the case
-protocols are supposed to lose. B2 is where the design's actual claim lives.
+**B2 confirmed `0004`'s mechanism and not its conclusion.** Megamorphism costs
+wasmtime +9% against JVM Clojure's +114% — a vtable slot really has no cache to
+thrash — but wasmtime is still 2.84× JVM, inheriting B1's monomorphic overhead
+unchanged. The surprise is V8: it degrades +122%, like the JVM, because winning
+B1 by speculating means having speculation to lose. Details in
+`doc/design/0002-*`.
 
-Then **two benchmarks the rewritten stop condition and `0007` now require**,
-neither of which existed when S0 was scoped:
+**B5 is next**, and B2 gave it a second reason to exist: at a megamorphic site
+there is no direct-call floor to measure against, because a direct call is
+monomorphic in target by definition. The reachable floor there is a guarded
+specialised call.
 
 - **B5 — call-site specialisation on wasmtime.** S0 cannot conclude without
-  it: it is the only lever B1 found, and the stop condition is written against
-  it. Highest priority after B2.
+  it: it is the only lever B1 found, the stop condition is written against it,
+  and it is the only floor a megamorphic site has.
 - **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
   aggregate argument, unmeasured, and it is what "a Rust developer calls a
   Clojure component" actually costs. Before S1 fixes the type mapping.

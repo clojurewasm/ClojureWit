@@ -38,6 +38,13 @@ reproduced is worse than no number, because it gets quoted.
   work whose result is unused. Consume the result — accumulate it and print it.
 - **State the prediction first.** `doc/design/0002-measure-first.md` records
   predictions before runs, and the prediction column is never edited afterwards.
+- **A control differs from its subject in exactly one construct, and the two
+  must be built the same way.** B2 needed three attempts: its control first
+  inlined a field read where the subject made a call, then called a callee that
+  cast one level shallower, then walked a different ring. Each version priced
+  the controls against each other instead of pricing the thing under test. The
+  cheap check is that a rebuilt control should land on the equivalent control
+  from a related benchmark — B2c on B1c, which it does to within 1%.
 - **A difference between two variants is not an attribution.** The bench-side
   form of the standing constraint in `.claude/CLAUDE.md`: subtracting B from A
   tells you what A and B differ by, so if they differ in more than one way,

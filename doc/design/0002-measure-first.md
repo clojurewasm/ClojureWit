@@ -35,9 +35,9 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | # | Measurement | Prediction (2026-07-29) | Measured |
 |---|---|---|---|
 | B1 | protocol dispatch, monomorphic | **within 2× of JVM** — JVM's cached path is 1 compare + interface call; ours is 3 loads + `call_ref` | **half right.** V8 **0.58×** (faster than JVM); wasmtime **5.61×**. The prediction holds on V8 and fails on wasmtime. The reasoning is wrong on both: the cost is neither the `call_ref` nor the three loads, but the first of them. |
-| B2 | protocol dispatch, 10 receiver types at one site | **faster than JVM** — the JVM's per-call-site cache thrashes; a vtable slot has no cache to thrash | _pending_ |
+| B2 | protocol dispatch, 10 receiver types at one site | **faster than JVM** — the JVM's per-call-site cache thrashes; a vtable slot has no cache to thrash | **half right, and the mechanism is right.** V8 **0.61×** — faster than JVM, prediction holds; wasmtime **2.84×** — slower, prediction fails. But megamorphism costs wasmtime **+9%** against the JVM's **+114%**, so "no cache to thrash" is confirmed. V8 degrades **+122%**, because it *does* speculate and loses it. |
 | B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | _pending_ |
-| B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | _pending_ |
+| B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | _pending_ — but B2 raised a question about the axis: see below |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -112,6 +112,56 @@ which of them accounts for it. `B1L` is the settling control, it cost about
 thirty lines, and it says the per-level reading was wrong by a factor of fifty.
 This is the same failure this note exists to prevent, committed inside the note
 that records it; see `.claude/rules/measurement.md`.
+
+## B2 — measured 2026-07-29
+
+Same machine, tools and sizes as B1. Ten receiver types at one site, in a ring
+of eleven so the ring length stays prime.
+
+| lane | B2c direct | B2m 1 type | B2 10 types |
+|---|---|---|---|
+| JVM Clojure | — | 1.517 | **3.241** |
+| V8 (node) | 0.739 | 0.894 | **1.987** |
+| wasmtime | 2.331 | 8.489 | **9.216** |
+
+**Read B2 against B2m, not against B1.** Ten types need a shared supertype to
+carry the walk's fields, which puts the objects a level deeper than B1's, and
+the deeper `ref.cast` is not free — an earlier draft of this benchmark compared
+B2 to B1 and to a control that cast one level shallower, and priced the
+controls against each other. `bench_mono` is B1's shape rebuilt inside B2's
+type graph; with it, B2c lands on B1c (2.331 against 2.35 on wasmtime, 0.739
+against 0.748 on V8), which is the check that the controls are now built alike.
+
+**What it says.**
+
+1. **The mechanism in `0004` is confirmed.** Megamorphism costs wasmtime
+   **+0.73 ns (+9%)** against JVM Clojure's **+1.72 ns (+114%)**. A vtable slot
+   really has no cache to thrash, and the design is very nearly indifferent to
+   how many types a site sees.
+2. **The prediction still fails on the server lane**, because indifference is
+   not enough when the starting point is bad: wasmtime is 2.84× JVM at a
+   megamorphic site, entirely inherited from B1's 6.16 ns of monomorphic
+   dispatch overhead, which B2m reproduces to within 1%.
+3. **V8 degrades like the JVM — +1.09 ns, +122%.** This is the surprise. V8
+   wins B1 *because* it speculates, so at a megamorphic site it has speculation
+   to lose, exactly as the JVM does. The "no cache to thrash" advantage is real
+   but it accrues to the engine that never had one. Against JVM Clojure V8 is
+   0.61× here and 0.58× at B1: the gap did **not** widen, which is what the
+   prediction's reasoning implied it would.
+4. **A lead for B4, deliberately not a finding.** An earlier control in this
+   module walked the *mixed* ring through a callee casting to the shared
+   supertype and cost 6.81 ns on wasmtime, where the present control — mono
+   ring, callee casting to a concrete type — costs 2.33. Two things differ, so
+   that gap attributes to neither. If what a `ref.cast` costs turns out to
+   depend on **the variety of input types it sees** rather than on hierarchy
+   depth, B4's prediction is aimed at the wrong axis and the note that made it
+   needs amending, not just filling in.
+5. **At a megamorphic site there is no direct-call floor to measure against.**
+   A direct call is monomorphic in target by definition, so B2 − B2c (1.25 ns
+   on V8, 6.89 on wasmtime) prices megamorphism *and* dispatch together and
+   cannot be split further. The reachable floor at such a site is a guarded
+   specialised call — which is B5, and this is a second reason S0 cannot
+   conclude without it.
 
 **Threats to validity, recorded so the number is not over-read.**
 

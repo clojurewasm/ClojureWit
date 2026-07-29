@@ -1,6 +1,6 @@
 # 0004 — Dispatch design (hypothesis, tested by S0)
 
-**Status:** proposed — **B1 measured, B2–B4 outstanding**. · 2026-07-29
+**Status:** proposed — **B1 and B2 measured, B3–B5 outstanding**. · 2026-07-29
 
 > **Amendment, 2026-07-29 (B1).** The prediction "protocol dispatch within 2× of
 > JVM" failed on wasmtime: **5.61×** (it held on V8, at 0.58×). The cost is not
@@ -15,7 +15,7 @@
 > rewritten (`doc/roadmap.md`, 2026-07-29) and under it **the server lane
 > fails**: 6.08 ns of dispatch overhead against a 1 ns budget. V8 passes at
 > 0.13.
-> B2–B4 have not run. See `doc/design/0002-measure-first.md`.
+> B2 has since run and is summarised below. See `doc/design/0002-measure-first.md`.
 
 Clojure is a dispatch-heavy language, and dispatch is where a Wasm port most
 plausibly fails. This note states the design and the reasoning; `bench/s0/`
@@ -85,6 +85,12 @@ cost is the first load off the receiver, because the indirect branch cannot run
 ahead until the target arrives. The only lever that moves it is removing the
 load — that is, specializing the call site (below), not reshaping the table.
 
+**B2 confirmed this and it was not enough.** Ten receiver types at one site cost
+wasmtime +9% and JVM Clojure +114%, so the indifference is real. wasmtime is
+still 2.84× JVM there, because it carries B1's monomorphic overhead unchanged.
+And V8 degrades +122% — it wins B1 by speculating, so it has speculation to
+lose. The advantage accrues to the engine that never had a cache.
+
 **Arithmetic inlined on the `i31` path.** `br_on_cast_fail` both operands to a
 slow path; on the fast path, two `i31.get_s` and an `i32.add` with an overflow
 check. No call. The JVM's equivalent is two eight-way class chains plus two
@@ -121,8 +127,11 @@ note's account of *where the cost is* (amendment above). Under the stop
 condition as rewritten on 2026-07-29 it also **fails on the server lane** —
 6.08 ns of overhead against a 1 ns budget — which is not a refutation of the
 design but a statement that its remaining lever is now load-bearing rather than
-optional. Still open: B2 (does the no-cache claim actually beat the JVM when a
-site is megamorphic?), B5 (does specialisation close the server lane?), B3, B4.
+optional.
+
+**B2 has run.** The no-cache claim holds as a mechanism — wasmtime is nearly
+indifferent to receiver count — and does not carry the server lane on its own.
+Still open: B5 (does specialisation close it?), B3, B4.
 
 B1 also raises the value of the specialization machinery under "Known weak
 points": on wasmtime it is not an optimization but the only thing that moves

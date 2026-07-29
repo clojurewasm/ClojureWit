@@ -29,6 +29,10 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
   gained the reference sources it needs.
 - **`doc/design/0007`** — the component boundary is linear memory, not GC.
   Found by the first survey; sizes S4 and adds an open question to the roadmap.
+- **S0 B2** — the same dispatch with ten receiver types, plus a depth-matched
+  one-type control so receiver count is the only variable. Confirms `0004`'s
+  mechanism (wasmtime +9% under megamorphism against JVM Clojure's +114%) and
+  not its conclusion (wasmtime is still 2.84× JVM). V8 degrades like the JVM.
 - **S0 B1** — hand-written WasmGC protocol dispatch, measured on V8 and
   wasmtime against a JVM Clojure baseline, with three controls forming a curve
   in how far the call target sits from the receiver. `bb bench-s0` runs it.
