@@ -160,7 +160,12 @@
                     ;; val_raw is a bare 16-byte union; arguments start at index
                     ;; 0 and the results overwrite them, so the array is
                     ;; max(nargs, nresults) elements.
-                    raw   ^MemorySegment (.allocate arena (long 32))
+                    ;; 16-byte aligned on purpose. Arena.allocate(long) gives
+                    ;; alignment 1, and wasmtime_val_raw_t is a union that
+                    ;; includes v128 — so an unaligned buffer is the obvious
+                    ;; suspect for the unchecked path measuring slower than the
+                    ;; checked one, which the header says is impossible.
+                    raw   ^MemorySegment (.allocate arena (long 32) (long 16))
                     p     ^CoreCall (MethodHandleProxies/asInterfaceInstance
                                      CoreCall (fx "wasmtime_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64 ADDR))
                     pr    ^CoreRawCall (MethodHandleProxies/asInterfaceInstance

@@ -193,10 +193,16 @@ median of 21 each:
 | **core module call** | **1575.4** | **1573.6** | 1.03× / 1.01× |
 | **component call** | **1929.9** | **1926.1** | 1.05× / 1.03× |
 
-The prediction holds on both halves that mattered: the swinging stopped —
-within-run spread fell from ~1.8× to **1.01–1.05×**, and the two runs agree to
-**0.2%** — and the numbers came in lower. The ratio prediction was close but
-wrong: **1.23×, not ~1.4×**.
+The prediction held on the half that mattered — within-run spread fell from
+~1.8× to **1.01–1.05×** — and the numbers came in lower. The ratio prediction
+was close and wrong: **1.23×, not ~1.4×**.
+
+> **Correction, later the same day.** "The two runs agree to 0.2%" was two lucky
+> runs. Six runs in, the checked core call has measured 1561, 1682, 1561 and
+> 2842 ns — **up to 1.8× apart across runs**, while staying within 1.02× *inside*
+> a run. So this machine holds a rate steady for the seconds a run takes and
+> does not hold it between runs, and **no three-significant-figure number in
+> this section should be quoted.** What survives is stated at the end.
 
 **So the cost is neither the binding nor the Component Model.**
 
@@ -238,6 +244,9 @@ answer rather than a modest one.
 
 ### The answer is no, and it contradicts the documentation
 
+*(Read the correction above first: the absolute numbers below move up to 1.8×
+between runs. The direction does not.)*
+
 | ns/call | run 1 | run 2 | spread within a run |
 |---|---|---|---|
 | core call, **checked** | 1561.5 | 1681.7 | 1.01× / 1.02× |
@@ -256,20 +265,42 @@ results overwriting them, length `max(nargs, nresults)` — and the call returns
 the right answer every time.
 
 **Recorded as an open contradiction between documentation and measurement, not
-explained.** Either the C API's unchecked path carries a cost the header does
-not describe, or there is a precondition it does not state. Reading
-`crates/c-api` in the wasmtime source (`bb ref wasmtime`) is the next step and
-has not been taken.
+explained.** Two candidate explanations have been ruled out:
 
-**What it settles regardless:** `call_unchecked` is not the lever. The checked
-path at ~1.6 µs is the fastest thing this C API offers, the component path is
-~1.9 µs, and **the ~355 ns the Component Model adds remains the only part of
-the cost this project could remove by changing its own choices.** If ~1.9 µs is
-too slow for what `cljwit.host` is for, the lever is outside the C API
-entirely — the Rust API's typed calls behind a shim.
+- **The C API is not the cause.** `wasmtime_func_call_unchecked` in
+  `crates/c-api/src/func.rs` (v47.0.1) is a thin wrapper: it builds a slice from
+  the raw pointer and calls `Func::call_unchecked`. The checked path additionally
+  converts `wasmtime_val_t` to `Val` both ways. The C layer does *strictly less*
+  work on the unchecked path.
+- **Buffer alignment is not the cause.** `Arena.allocate(long)` gives alignment
+  1 and `wasmtime_val_raw_t` is a union containing `v128`, which made an
+  unaligned buffer the obvious suspect. Allocating it 16-byte aligned changed
+  the number by 0%.
 
-The prediction was wrong, and not in the direction its own falsifier named: it
-predicted an improvement and got a 3× regression.
+What remains unexamined is wasmtime's own `Func::call_unchecked` against
+`Func::call` in `crates/wasmtime`. **Not pursued further**, because it blocks
+nothing — see below — and chasing a runtime's internals is not what this stage
+is for. `bb ref wasmtime` is there when it matters.
+
+**The prediction was wrong twice over** — it predicted an improvement and got a
+regression, and the follow-up prediction that alignment explained it was also
+wrong.
+
+### What survives all of this
+
+Stated at the precision the measurements actually support:
+
+- **The JVM→native binding is negligible.** ~7 ns against a call costing
+  microseconds. That is three orders of magnitude and not a close call, so
+  **`cljwit.host` is pure Clojure and the binding is not worth optimising.**
+- **The Component Model adds roughly 20%** over a core call. Measured as a
+  ratio inside single runs, where this machine is steady.
+- **`call_unchecked` is not the lever** — it is slower, in every run, by
+  1.7–3.0×.
+- **A scalar component call costs a couple of microseconds.** Order of
+  magnitude, not a figure.
+
+Everything else in this section is a number this machine would not reproduce.
 
 ## Why this shape
 
