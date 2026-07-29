@@ -51,24 +51,17 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Design `cljwit.host`'s API** is now the only thing S1 is waiting on — the
-   cost structure is closed on every lane that has a control. A component call
-   is ~0.39 µs and ~79% of that is the Canonical ABI, which no binding choice
-   removes. Decide there whether the hand-measured struct offsets stay
-   (`0011` constraint 3) or a shim retires them.
-3. **`0012` is closed for every row whose WIT type we can write today.** The
-   echo test (`test/cljwit/roundtrip_test.clj`, 87 assertions, in `bb check`)
-   covers the scalars, `string`, `enum`, `option`, nested `option`, `result`,
-   `variant`, `list<u32>` and `record`. Every row corrected the note. What is
-   left needs `resource` (`own`/`borrow`) or an unshipped feature (`map`,
-   `list<T,N>`, `stream`/`future`), so it waits on a guest that can declare
-   one — not on more host marshalling.
-4. **`0010`'s one untried falsifier is architecture, not more points.** Both
-   crossovers are closed (wasmtime 26.6% at nine points, V8 80.1% bracketed by
-   k = 7, 8, 10). What no one has run is *any* of S0 on x86_64 Linux; every
-   number in `0002` and `0010` is arm64 macOS. Indirect-branch prediction is
-   the mechanism behind wasmtime's hump, and it is the part most likely to
-   differ.
+1. **Implement `0014`.** The API is designed and argued: reflection as the
+   primitive, exact WIT names as identity, three lifetimes, a non-concurrency
+   check, eager result lifting. An adversarial review overturned three of five
+   first-draft decisions and found a fourth unsafe, so the note is worth
+   following rather than re-deriving.
+2. **`0012`'s `ex-data` contract needs a decision.** It promises the WIT type
+   name in a thrown `result`, and reflection cannot supply one — the C API has
+   no accessor for a type's own name. Either the contract shrinks or the name
+   comes from the codegen layer.
+3. **S1 is not done until the `require`-a-component surface exists**, which is
+   how `doc/roadmap.md` states it. `0014` is the primitive under it.
 
 ## Where we are
 

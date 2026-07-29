@@ -14,3 +14,6 @@
 # cargo build output for dev/spike/rust_call_cost (Cargo.lock is committed;
 # it pins the wasmtime crate to the version in tools.json)
 dev/spike/rust_call_cost/target/
+
+# Build outputs that sit beside their tracked sources in dev/resources.
+dev/resources/*.wasm

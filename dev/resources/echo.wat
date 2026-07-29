@@ -6,6 +6,10 @@
   ;; one means handing back the same (ptr, len) — no copy. What it does need is
   ;; the two things doc/design/0007 named: an exported memory and cabi_realloc.
   (memory (export "memory") 1)
+  ;; A bump allocator over one page that never frees: fine for one-shot
+  ;; assertions, and it runs out after roughly 1500 string calls. Any
+  ;; "instantiate once, call many" benchmark of the aggregate rows needs a real
+  ;; allocator here, not a cljwit.host bug report.
   (global $next (mut i32) (i32.const 96))
   (func (export "cabi_realloc")
         (param $old i32) (param $old-sz i32) (param $align i32) (param $new-sz i32)
