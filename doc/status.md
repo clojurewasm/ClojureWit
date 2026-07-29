@@ -8,8 +8,9 @@ _Short by design. If this file is long, something belongs in `doc/design/` or
 ## Where we are
 
 Repository, toolchain, gate, and CI are in place and verified end to end
-(`bb check` green in 0.1s; `nix flake check` passes; both hooks tested
-including their failure paths). The design is written down in `doc/design/`
+(`bb check` green in 0.1s; `nix develop` builds and satisfies all seven tools —
+wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0; both hooks tested including
+their failure paths). The design is written down in `doc/design/`
 and is **entirely unmeasured**.
 
 `wasmtime` and `binaryen` are not required yet — `tools.json` marks them
