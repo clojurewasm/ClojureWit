@@ -1,0 +1,32 @@
+// A WIT this project did not design its marshaller against: resources with
+// constructors and methods, flags, tuples, and types nested several deep.
+//
+// There is no .wat beside it on purpose. `wasm-tools component embed --dummy`
+// synthesises the core module, so a real component with this shape is
+// reproducible from a fresh clone with nothing but the pinned wasm-tools --
+// no Rust toolchain, no hand-written guest, and no chance of the guest
+// quietly matching what the host expects. Calling anything here traps; what
+// it exists to exercise is reflection and instantiation.
+
+package local:zoo@0.3.0;
+
+interface shapes {
+  resource counter {
+    constructor(start: u32);
+    bump: func(by: u32) -> u32;
+    peek: func() -> u32;
+    reset: static func() -> counter;
+  }
+  flags perms { read, write, exec }
+  record point { x: f64, y: f64 }
+  variant node { leaf(u32), branch(list<u32>), nil }
+  take-tuple: func(t: tuple<u32, string>) -> tuple<bool, f64>;
+  take-flags: func(p: perms) -> perms;
+  take-nested: func(v: list<record-of-lists>) -> option<result<point, string>>;
+  record record-of-lists { rows: list<list<s32>>, tag: node }
+}
+
+world zoo {
+  export shapes;
+  export plain: func(a: u32) -> string;
+}

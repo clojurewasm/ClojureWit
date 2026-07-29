@@ -57,7 +57,9 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
    component's own reflected type tree, not hard-coded. `resource`,
    `flags`, `tuple`, `stream`/`future` and `map` fail at instantiation naming
    the kind. Functions inside WIT interfaces are reached too, keyed
-   `"pkg:name/iface@ver#func"`. **What is left for S1 is the
+   `"pkg:name/iface@ver#func"`, and `dev/resources/zoo.wit` holds it to a
+   component with resources, flags, tuples and deep nesting that no guest here
+   was written to match. **What is left for S1 is the
    `require`-a-component surface**, which is how `doc/roadmap.md` states the
    stage.
 2. **`0012`'s `ex-data` contract needs a decision.** It promises the WIT type

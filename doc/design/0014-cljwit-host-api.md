@@ -209,6 +209,11 @@ just makes it a rule rather than an accident.
 
 ## Resources
 
+- `dev/resources/zoo.wit` — a component this project did not design its
+  marshaller against: resources with constructors and methods, flags, tuples,
+  and types nested several deep, built with `wasm-tools component embed
+  --dummy` so no guest can quietly match what the host expects. It is the
+  standing counterweight to this note's own recorded failure mode.
 - `bb spike-reflect` — the self-description A rests on.
 - `0012` — the type mapping the marshallers implement.
 - `0013` — the cost budget the per-call decisions are measured against.

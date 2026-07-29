@@ -30,6 +30,21 @@
      (run! "wasm-tools" "component" "new" (str emb) "-o" (str out))
      out)))
 
+(defn- build-dummy!
+  "A component with no guest at all — `--dummy` synthesises the core module
+   from the WIT. The point is a shape this repo did not author."
+  [base]
+  (let [emb (File/createTempFile "cljwit-dummy" ".embed.wasm")
+        out (File/createTempFile "cljwit-dummy" ".component.wasm")
+        run! (fn [& args]
+               (let [{:keys [exit err]} (apply shell/sh args)]
+                 (when-not (zero? exit)
+                   (throw (ex-info (str "failed: " (pr-str args)) {:err err})))))]
+    (run! "wasm-tools" "component" "embed" "--dummy"
+          (str "dev/resources/" base ".wit") "-o" (str emb))
+    (run! "wasm-tools" "component" "new" (str emb) "-o" (str out))
+    out))
+
 (defn- with-echo
   "Opens the three lifetimes `0014` separates and calls `f` with the instance."
   [f]
@@ -168,4 +183,52 @@
                 (is (thrown? clojure.lang.ExceptionInfo
                              (get i (keyword "local:iface/math@1.2.3#add"))))
                 (is (fn? (:top-level i)) "the plain label still gets one")))))
+        (finally (.delete ^File c))))))
+
+(deftest survives-a-component-it-did-not-author
+  ;; Three times now a claim held for the artifact in this repo and failed for
+  ;; the artifact the design is for (`0007`, `0013`, and the interface walk).
+  ;; dev/resources/zoo.wit is the counterweight: resources, flags, tuples and
+  ;; types nested several deep, with no guest written to match.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping zoo test")
+    (let [c (build-dummy! "zoo")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file c))]
+            (with-open [i (host/instantiate a)]
+              (testing "resource methods are exports too, under their annotated names"
+                (is (= #{"plain"
+                         "local:zoo/shapes@0.3.0#[constructor]counter"
+                         "local:zoo/shapes@0.3.0#[method]counter.bump"
+                         "local:zoo/shapes@0.3.0#[method]counter.peek"
+                         "local:zoo/shapes@0.3.0#[static]counter.reset"
+                         "local:zoo/shapes@0.3.0#take-tuple"
+                         "local:zoo/shapes@0.3.0#take-flags"
+                         "local:zoo/shapes@0.3.0#take-nested"}
+                       (set (host/exports i)))))
+
+              (testing "arbitrary nesting reflects exactly"
+                (is (= {:params [["v" {:kind :list
+                                       :element {:kind :record
+                                                 :fields [["rows" {:kind :list
+                                                                   :element {:kind :list :element :s32}}]
+                                                          ["tag" {:kind :variant
+                                                                  :cases [["leaf" :u32]
+                                                                          ["branch" {:kind :list :element :u32}]
+                                                                          ["nil" nil]]}]]}}]]
+                        :result {:kind :option
+                                 :ty {:kind :result
+                                      :ok {:kind :record :fields [["x" :f64] ["y" :f64]]}
+                                      :err :string}}}
+                       (host/signature i "local:zoo/shapes@0.3.0#take-nested"))))
+
+              (testing "a type we cannot marshal fails by name, not by wrong answer"
+                (doseq [[nm kind] [["take-flags" :flags] ["take-tuple" :tuple]
+                                   ["[constructor]counter" :own]]]
+                  (let [f (i (str "local:zoo/shapes@0.3.0#" nm))
+                        e (is (thrown? clojure.lang.ExceptionInfo (f nil)))]
+                    (is (= :unsupported-type (:cljwit/error (ex-data e))) nm)
+                    (is (some #{kind} (:cljwit/kinds (ex-data e)))
+                        (str nm " should name " kind))))))))
         (finally (.delete ^File c))))))
