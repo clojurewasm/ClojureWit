@@ -1,0 +1,8 @@
+// A hand-declared subset of the real wasi:cli@0.2.0, so this repo can check
+// `:args` and `:env` without vendoring the WASI WIT tree. The signatures are
+// the real ones; wasmtime satisfies them through add_wasip2.
+package wasi:cli@0.2.0;
+interface environment {
+  get-arguments: func() -> list<string>;
+  get-environment: func() -> list<tuple<string, string>>;
+}

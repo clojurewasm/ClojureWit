@@ -153,6 +153,22 @@ handles.
 
 The first draft listed this as a falsifier. It is not one waiting to fire.
 
+The shapes, read from the pinned headers so the next unit starts on them:
+
+```c
+wasmtime_component_resource_type_new_host(uint32_t ty);
+wasmtime_component_linker_instance_add_resource(
+    linker_instance, name, name_len, resource_type,
+    void (*destructor)(void *, wasmtime_context_t *, uint32_t rep),
+    void *data, void (*finalizer)(void *));
+wasmtime_component_resource_host_new(bool owned, uint32_t rep, uint32_t ty);
+```
+
+So a host resource is a `u32` type tag, a destructor upcall of a *second*
+shape, and handles minted per call. `resource_host_to_any` is how one becomes
+a val — and it panics outside a call scope, which is the landmine already
+recorded above.
+
 ## Alternatives rejected
 
 - **Imports on the artifact, sharing one set of host functions.** Wrong the

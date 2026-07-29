@@ -492,3 +492,23 @@
                 (is (integer? ((i "roll")))
                     "naming one capability does not break the rest")))))
         (finally (.delete ^File f))))))
+
+(deftest wasi-arguments
+  ;; `0017` E's remaining surface. `:args` and `:env` are the two that need an
+  ;; array of C strings rather than a single call, so they are the ones where
+  ;; the wiring can be wrong without the boolean capabilities noticing.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping wasi-args test")
+    (let [f (build-component! "args")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (testing "the guest sees exactly the arguments it was given"
+              (doseq [as [[] ["one"] ["a" "b" "c"] ["x" "y" "z" "w" "v"]]]
+                (with-open [i (host/instantiate a {:wasi {:args as}})]
+                  (is (= (count as) ((i "argc"))) (pr-str as)))))
+            (testing "and none when none are named — deny-by-default"
+              (with-open [i (host/instantiate a {:wasi {}})]
+                (is (= 0 ((i "argc")))
+                    "no :args means no arguments, not the host's")))))
+        (finally (.delete ^File f))))))

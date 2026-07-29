@@ -165,6 +165,8 @@
      :wasi-stderr   (b "wasi_config_inherit_stderr" nil ADDR)
      :wasi-stdin    (b "wasi_config_inherit_stdin" nil ADDR)
      :wasi-env      (b "wasi_config_inherit_env" nil ADDR)
+     :wasi-argv     (b "wasi_config_set_argv" ValueLayout/JAVA_BOOLEAN ADDR I64 ADDR)
+     :wasi-setenv   (b "wasi_config_set_env" ValueLayout/JAVA_BOOLEAN ADDR I64 ADDR ADDR)
      ;; 0017 C: wasmtime frees what an import callback writes, so a string
      ;; result cannot come from an Arena. libc's malloc is the allocator it
      ;; expects, and this is the only place in the library that needs one.
@@ -916,14 +918,28 @@
   "Adds every WASI 0.2 interface to the linker and gives the store a context.
    Deny-by-default: a capability is inherited only when named, because the
    alternative leaks the host's environment into the guest."
-  [api ^MemorySegment ctx clink {:keys [inherit-stdout inherit-stderr
-                                        inherit-stdin inherit-env]}]
+  [api ^Arena arena ^MemorySegment ctx clink
+   {:keys [inherit-stdout inherit-stderr inherit-stdin inherit-env args env]}]
   (ok! api "add_wasip2" (invoke (:add-wasip2 api) clink))
-  (let [cfg (invoke (:wasi-new api))]
+  (let [cfg (invoke (:wasi-new api))
+        strs (fn [xs]
+               (let [a ^MemorySegment (.allocate arena (long (* 8 (max 1 (count xs)))))]
+                 (dotimes [i (count xs)]
+                   (.set a ADDR (long (* 8 i)) ^MemorySegment (cstr arena (str (nth xs i)))))
+                 a))]
     (when inherit-stdout (invoke (:wasi-stdout api) cfg))
     (when inherit-stderr (invoke (:wasi-stderr api) cfg))
     (when inherit-stdin  (invoke (:wasi-stdin api) cfg))
     (when inherit-env    (invoke (:wasi-env api) cfg))
+    (when args
+      (when-not (invoke (:wasi-argv api) cfg (long (count args)) (strs args))
+        (throw (ex-info "wasi_config_set_argv refused the arguments"
+                        {:cljwit/error :wasi-config}))))
+    (when env
+      (when-not (invoke (:wasi-setenv api) cfg (long (count env))
+                        (strs (map key env)) (strs (map val env)))
+        (throw (ex-info "wasi_config_set_env refused the environment"
+                        {:cljwit/error :wasi-config}))))
     ;; The config is consumed even on error, so it is per-instantiate.
     (ok! api "set_wasi" (invoke (:set-wasi api) ctx cfg))))
 
@@ -946,7 +962,7 @@
         ;; report a trap with the cause gone.
          dead  (atom nil)
          _     (define-imports! api arena e ctx clink ct imports dead)
-         _     (when wasi (enable-wasi! api ctx clink wasi))
+         _     (when wasi (enable-wasi! api arena ctx clink wasi))
          inst  ^MemorySegment (.allocate arena (long INSTANCE))
          _     (ok! api "linker_instantiate"
                     (invoke (:instantiate api) clink ctx (.-ptr art) inst))
