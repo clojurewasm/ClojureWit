@@ -10,8 +10,9 @@ _Short by design. If this file is long, something belongs in `doc/design/` or
 Repository, toolchain, gate, and CI are in place and verified end to end
 (`bb check` green in 0.1s; `nix develop` builds and satisfies all seven tools —
 wasmtime 47.0.1, binaryen 129, wasm-tools 1.254.0; both hooks tested including
-their failure paths). The design is written down in `doc/design/`
-and is **entirely unmeasured**.
+their failure paths). **CI is green on a fresh Linux runner in 50s** — a clone
+with nothing installed but Nix reaches the same gate. The design is written
+down in `doc/design/` and is **entirely unmeasured**.
 
 `wasmtime` and `binaryen` are not required yet — `tools.json` marks them
 optional until S0 needs them, and `bb bench-s0` names them if they are missing.
@@ -39,6 +40,14 @@ then find out.
 ## Blocked / needs a decision from outside
 
 - Nothing yet.
+
+## Incidents so far
+
+- **2026-07-29 — the gate passed locally and failed in CI.** `src/` and `test/`
+  were empty directories, so git never tracked them; `clj-kondo` failed on a
+  fresh clone. Fixed by having the tasks operate on directories that exist.
+  Recorded because the second occurrence of "green locally, red on a clone" is
+  what would justify machinery, and this is the first.
 
 ## Deliberately not built
 
