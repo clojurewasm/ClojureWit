@@ -63,7 +63,7 @@
 (def ^:private VAL-KIND
   {:bool 0 :s8 1 :u8 2 :s16 3 :u16 4 :s32 5 :u32 6 :s64 7 :u64 8
    :f32 9 :f64 10 :char 11 :string 12
-   :flags 20 :tuple 15})
+   :flags 20 :tuple 15 :own 21 :borrow 21})
 
 (defn- lib-path []
   (or (System/getenv "CLJWIT_WASMTIME_LIB")
@@ -83,11 +83,22 @@
   (.invokeWithArguments mh ^java.util.List (vec args)))
 
 (defn- ok!
-  "wasmtime returns a null error pointer on success."
-  [what v]
+  "wasmtime returns a null error pointer on success. On failure the message is
+   the only thing that says *why*, and throwing without it turned a two-minute
+   debug into an afternoon once already."
+  [api what v]
   (let [^MemorySegment e v]
     (when-not (.equals MemorySegment/NULL e)
-      (throw (ex-info (str what " failed") {:cljwit/error :wasmtime})))
+      (let [msg (with-open [a (Arena/ofConfined)]
+                  (let [nm ^MemorySegment (.allocate a (long 16))]
+                    (invoke (:err-message api) e nm)
+                    (let [n (.get nm I64 (long 0))
+                          p ^MemorySegment (.get nm ADDR (long 8))
+                          b (byte-array n)]
+                      (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
+                      (String. b "UTF-8"))))]
+        (invoke (:err-delete api) e)
+        (throw (ex-info (str what ": " msg) {:cljwit/error :wasmtime}))))
     v))
 
 (defn- api
@@ -134,7 +145,12 @@
      :instantiate   (b "wasmtime_component_linker_instantiate" ADDR ADDR ADDR ADDR ADDR)
      :export-index  (b "wasmtime_component_instance_get_export_index" ADDR ADDR ADDR ADDR ADDR I64)
      :get-func      (b "wasmtime_component_instance_get_func" BOOL ADDR ADDR ADDR ADDR)
-     :func-call     (b "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)}))
+     :func-call     (b "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)
+     :res-clone     (b "wasmtime_component_resource_any_clone" ADDR ADDR)
+     :res-drop      (b "wasmtime_component_resource_any_drop" ADDR ADDR ADDR)
+     :res-delete    (b "wasmtime_component_resource_any_delete" nil ADDR)
+     :err-message   (b "wasmtime_error_message" nil ADDR ADDR)
+     :err-delete    (b "wasmtime_error_delete" nil ADDR)}))
 
 (defn- cstr [^Arena arena ^String t]
   (let [b (.getBytes t "UTF-8")
@@ -237,6 +253,39 @@
                                (range (invoke (:var-count api) of)))})
       k)))
 
+(def ^:private RESOURCE 21)   ; wasmtime_component_val_t's kind for a handle
+
+(deftype Handle [^MemorySegment ptr ^MemorySegment ctx api registry
+                 ^AtomicBoolean closed]
+  java.lang.AutoCloseable
+  (close [this]
+    ;; 0016 B: `delete` is required per handle whatever `drop` did, so it goes
+    ;; in a finally. Marking closed first would leak the host memory when
+    ;; `drop` throws; marking last would re-drop on a retry.
+    (when (.compareAndSet closed false true)
+      (swap! registry disj this)
+      (try
+        (ok! api "resource drop" (invoke (:res-drop api) ctx ptr))
+        (finally (invoke (:res-delete api) ptr))))
+    nil)
+  Object
+  (toString [_] (str "#cljwit/resource[" (if (.get closed) "closed" "open") "]")))
+
+(defn- transfer!
+  "0016 C: lowering an `own` gives the resource to the guest. The host's handle
+   is stale immediately — dropping it afterwards is `unknown handle index` —
+   so it is deleted, never dropped."
+  [^Handle h]
+  (when (.compareAndSet ^AtomicBoolean (.-closed h) false true)
+    (swap! (.-registry h) disj h)
+    (invoke (:res-delete (.-api h)) (.-ptr h))))
+
+(defn- live-ptr [^Handle h what]
+  (when (.get ^AtomicBoolean (.-closed h))
+    (throw (ex-info (str "resource handle is closed (" what ")")
+                    {:cljwit/error :closed})))
+  (.-ptr h))
+
 ;; --- marshalling ------------------------------------------------------------
 ;; Lowering and lifting are *compiled* from the reflected tree once per export,
 ;; not interpreted per call. An unsupported type fails at instantiation naming
@@ -294,10 +343,20 @@
 
 (defn- lower-fn [tree]
   (if (keyword? tree)
-    (if (= :string tree)
-      (fn [^Arena arena ^MemorySegment seg v]
-        (.set seg I8 (long 0) (byte (VAL-KIND :string)))
-        (write-name! arena seg UNION v))
+    (case tree
+      :string (fn [^Arena arena ^MemorySegment seg v]
+                (.set seg I8 (long 0) (byte (VAL-KIND :string)))
+                (write-name! arena seg UNION v))
+      (:own :borrow)
+      (let [own? (= :own tree)]
+        (fn [_ ^MemorySegment seg v]
+          (let [^Handle h v
+                ^MemorySegment p (live-ptr h (if own? "transferring" "borrowing"))]
+            (.set seg I8 (long 0) (byte RESOURCE))
+            (.set seg ADDR (long UNION) p)
+            ;; A borrow leaves the handle live; an own is stale the moment the
+            ;; guest takes it (0016 C).
+            (when own? (transfer! h)))))
       (scalar-lower tree))
     (case (:kind tree)
       :enum (fn [^Arena arena ^MemorySegment seg v]
@@ -377,20 +436,30 @@
                     (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count fs)))
                     (.set seg ADDR (long (+ UNION VEC-DATA)) buf)))))))
 
-(defn- lift-fn [tree]
+(defn- lift-fn [tree rt]
   (if (keyword? tree)
-    (if (= :string tree)
-      (fn [^MemorySegment seg] (read-str seg UNION))
+    (case tree
+      :string (fn [^MemorySegment seg] (read-str seg UNION))
+      ;; 0016: clone on lift. With one reused result val, the next call deletes
+      ;; the previous handle -- and deletes without dropping, so the resource
+      ;; leaks and its destructor never runs.
+      (:own :borrow)
+      (fn [^MemorySegment seg]
+        (let [p ^MemorySegment (.get seg ADDR (long UNION))
+              c ^MemorySegment (invoke (:res-clone (:api rt)) p)
+              h (->Handle c (:ctx rt) (:api rt) (:registry rt) (AtomicBoolean. false))]
+          (swap! (:registry rt) conj h)
+          h))
       (scalar-lift tree))
     (case (:kind tree)
       :enum (fn [^MemorySegment seg] (keyword (read-str seg UNION)))
-      :option (let [inner (lift-fn (:ty tree))]
+      :option (let [inner (lift-fn (:ty tree) rt)]
                 (fn [^MemorySegment seg]
                   (let [p ^MemorySegment (.get seg ADDR (long UNION))]
                     (when-not (.equals MemorySegment/NULL p)
                       (inner (.reinterpret p (long VAL)))))))
-      :result (let [lo (some-> (:ok tree) lift-fn)
-                    le (some-> (:err tree) lift-fn)]
+      :result (let [lo (when (:ok tree) (lift-fn (:ok tree) rt))
+                    le (when (:err tree) (lift-fn (:err tree) rt))]
                 (fn [^MemorySegment seg]
                   (let [ok? (not= 0 (.get seg I8 (long RES-OK)))
                         f   (if ok? lo le)
@@ -398,7 +467,7 @@
                     [(if ok? :ok :err)
                      (when (and f (not (.equals MemorySegment/NULL p)))
                        (f (.reinterpret p (long VAL))))])))
-      :variant (let [lifts (into {} (map (fn [[n t]] [n (some-> t lift-fn)]))
+      :variant (let [lifts (into {} (map (fn [[n t]] [n (when t (lift-fn t rt))]))
                                  (:cases tree))]
                  (fn [^MemorySegment seg]
                    (let [nm (read-str seg VAR-NAME)
@@ -412,20 +481,20 @@
                      p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
                      b (.reinterpret p (long (* 16 n)))]
                  (into #{} (map (fn [i] (keyword (read-str b (* 16 i))))) (range n))))
-      :tuple (let [els (mapv lift-fn (:types tree))]
+      :tuple (let [els (mapv (fn [t] (lift-fn t rt)) (:types tree))]
                (fn [^MemorySegment seg]
                  (let [p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
                        b (.reinterpret p (long (* VAL (count els))))]
                    (mapv (fn [i] ((nth els i) (.asSlice b (long (* VAL i)) (long VAL))))
                          (range (count els))))))
-      :list (let [el (lift-fn (:element tree))]
+      :list (let [el (lift-fn (:element tree) rt)]
               (fn [^MemorySegment seg]
                 (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
                       p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
                       b (.reinterpret p (long (* VAL n)))]
                   (mapv (fn [i] (el (.asSlice b (long (* VAL i)) (long VAL))))
                         (range n)))))
-      :record (let [fs (mapv (fn [[n t]] [(keyword n) (lift-fn t)]) (:fields tree))]
+      :record (let [fs (mapv (fn [[n t]] [(keyword n) (lift-fn t rt)]) (:fields tree))]
                 (fn [^MemorySegment seg]
                   (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
                         p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
@@ -504,7 +573,8 @@
     nil))
 
 (deftype Instance [^Artifact artifact ^Arena arena exports aliases sigs
-                   ^MemorySegment store ^AtomicBoolean closed ^AtomicBoolean in-call]
+                   ^MemorySegment store ^AtomicBoolean closed ^AtomicBoolean in-call
+                   registry]
   java.lang.AutoCloseable
   (close [_]
     ;; 0014 D: close is an entry into the store like any other. Take `in-call`
@@ -516,6 +586,9 @@
         (throw (ex-info "cannot close while a call is in flight"
                         {:cljwit/error :concurrent-use})))
       (when (.compareAndSet closed false true)
+        ;; Before the store goes: a handle that outlives it holds a dangling
+        ;; context, which is the one real use-after-free in this row (0016 D).
+        (run! (fn [^java.lang.AutoCloseable h] (.close h)) @registry)
         (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
         (.close arena)))
     nil)
@@ -555,7 +628,7 @@
         buf   ^MemorySegment (.allocate arena (long (alength ^bytes bs)))
         _     (MemorySegment/copy ^bytes bs 0 buf I8 0 (alength ^bytes bs))
         out   ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
-    (ok! "component_new"
+    (ok! a "component_new"
          (invoke (:comp-new a) (.-ptr e) buf (long (alength ^bytes bs)) out))
     (->Artifact e arena (.get out ADDR (long 0)) (AtomicBoolean. false))))
 
@@ -584,10 +657,10 @@
    and reused; the result is lifted eagerly and nothing backed by it escapes
    (`0014` E)."
   [api ^Arena arena ^MemorySegment ctx ^MemorySegment f sig
-   ^AtomicBoolean closed ^AtomicBoolean in-call nm]
+   ^AtomicBoolean closed ^AtomicBoolean in-call nm rt]
   (let [ptypes  (mapv (comp lower-fn second) (:params sig))
         n       (count ptypes)
-        rlift   (some-> (:result sig) lift-fn)
+        rlift   (when (:result sig) (lift-fn (:result sig) rt))
         args    ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))
         res     ^MemorySegment (.allocate arena (long VAL))
         ;; A confined arena per call would be safer for strings, but nothing
@@ -607,7 +680,7 @@
         (with-open [scratch (Arena/ofConfined)]
           (dotimes [i n]
             ((nth ptypes i) scratch (.asSlice args (long (* VAL i)) (long VAL)) (nth vs i)))
-          (ok! (str "call " nm) (invoke call! f ctx args (long n) res (long 1)))
+          (ok! api (str "call " nm) (invoke call! f ctx args (long n) res (long 1)))
           ;; No val_delete on `res`. Its header says it "will deallocate the
           ;; contents of the value but not the value pointer itself", and on a
           ;; result or variant — the two kinds carrying a payload pointer — the
@@ -631,11 +704,16 @@
         ctx   (invoke (:store-context api) store)
         clink (invoke (:linker-new api) (.-ptr e))
         inst  ^MemorySegment (.allocate arena (long INSTANCE))
-        _     (ok! "linker_instantiate"
+        _     (ok! api "linker_instantiate"
                    (invoke (:instantiate api) clink ctx (.-ptr art) inst))
         ct    (invoke (:comp-type api) (.-ptr art))
         closed  (AtomicBoolean. false)
         in-call (AtomicBoolean. false)
+        ;; 0016 D: one call can yield handles the caller never destructured, so
+        ;; the instance keeps the list and closes what is left before deleting
+        ;; the store a handle's context points into.
+        registry (atom #{})
+        rt      {:ctx ctx :api api :registry registry}
         item-kind (fn [^MemorySegment it] (bit-and (long (.get it I8 (long 0))) 0xFF))
         ;; Every export, flattened. A function inside an interface is keyed the
         ;; way WIT spells it — "pkg:name/iface@ver#func" — and remembers the
@@ -704,9 +782,9 @@
                                       (when-not (invoke (:get-func api) inst ctx eidx f)
                                         (throw (ex-info (str "export " key " vanished between type and instance")
                                                         {:cljwit/error :wasmtime})))
-                                      (export-fn api arena ctx f sig closed in-call key)))])))
+                                      (export-fn api arena ctx f sig closed in-call key rt)))])))
                     found)]
-    (->Instance art arena fns (alias-map fns) sigs store closed in-call)))
+    (->Instance art arena fns (alias-map fns) sigs store closed in-call registry)))
 
 (defn exports
   "Every exported function, by its exact WIT name."

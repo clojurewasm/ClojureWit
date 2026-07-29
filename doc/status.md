@@ -13,8 +13,13 @@ _Short by design, and printed at every session start — so findings live in
    `close` as `try { drop } finally { delete }`, lowering an `own` transfers,
    the instance closes outstanding handles before deleting its store) and
    `borrow` is out of scope because it **cannot appear in a return position**.
-   The guest to test it against now exists (`dev/resources/res.{wit,wat}`) and
-   reflects correctly; what is left is the marshalling.
+   **A, B and D are implemented**: lifting an `own`, lowering into a `borrow`,
+   `close` as `try { drop } finally { delete }`, and the instance closing
+   handles the caller never destructured before deleting its store.
+   **C is open** — lowering an `own` is refused with `mismatched resource
+   types` for a handle from this instance's own constructor that works fine as
+   a borrow. The clone is ruled out; a C control would separate guest from
+   host, as it did for `0013`.
 2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
    WASI requires them, and nothing has touched them. They also invalidate
    `0014` E's argument-buffer reuse, which is safe today only because no guest

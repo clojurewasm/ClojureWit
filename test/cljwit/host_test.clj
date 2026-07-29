@@ -237,22 +237,15 @@
                                       :err :string}}}
                        (host/signature i "local:zoo/shapes@0.3.0#take-nested"))))
 
-              (testing "only the resource handles are still unmarshallable"
-                (doseq [[nm kind] [["[constructor]counter" :own]
-                                   ["[method]counter.bump" :borrow]]]
-                  (let [f (i (str "local:zoo/shapes@0.3.0#" nm))
-                        e (is (thrown? clojure.lang.ExceptionInfo (f nil)))]
-                    (is (= :unsupported-type (:cljwit/error (ex-data e))) nm)
-                    (is (some #{kind} (:cljwit/kinds (ex-data e)))
-                        (str nm " should name " kind)))))
-
-              (testing "flags and tuple now marshal, and reach the guest"
-                ;; --dummy traps, so getting a wasmtime error rather than an
+              (testing "every export now gets past marshalling and reaches the guest"
+                ;; --dummy traps, so a wasmtime error rather than an
                 ;; :unsupported-type one is the evidence that lowering worked.
-                (doseq [[nm arg] [["take-flags" #{:read}]
-                                  ["take-tuple" [1 "x"]]]]
+                ;; When this repo learns a new type, this block is what notices.
+                (doseq [[nm & args] [["take-flags" #{:read}]
+                                     ["take-tuple" [1 "x"]]
+                                     ["[static]counter.reset"]]]
                   (let [f (i (str "local:zoo/shapes@0.3.0#" nm))
-                        e (is (thrown? clojure.lang.ExceptionInfo (f arg)))]
+                        e (is (thrown? clojure.lang.ExceptionInfo (apply f args)))]
                     (is (= :wasmtime (:cljwit/error (ex-data e)))
                         (str nm " should reach the guest and trap"))))))))
         (finally (.delete ^File c))))))
@@ -290,10 +283,62 @@
                        (host/signature i "local:res/bag@0.1.0#make-two"))
                     "handles nested in a list, which with-open has no shape for"))
 
-              (testing "until 0016 is implemented, every one of them says so"
-                (doseq [nm ["[constructor]counter" "consume" "make-two"]]
-                  (let [f (i (str "local:res/bag@0.1.0#" nm))
-                        e (is (thrown? clojure.lang.ExceptionInfo (f 1)))]
-                    (is (= :unsupported-type (:cljwit/error (ex-data e))) nm)
-                    (is (some #{:own} (:cljwit/kinds (ex-data e))) nm)))))))
+              (let [make    (i "local:res/bag@0.1.0#[constructor]counter")
+                    bump    (i "local:res/bag@0.1.0#[method]counter.bump")
+                    consume (i "local:res/bag@0.1.0#consume")
+                    two     (i "local:res/bag@0.1.0#make-two")]
+
+                (testing "0016 A — a handle is opaque, and a borrow leaves it live"
+                  (with-open [^java.lang.AutoCloseable c (make 10)]
+                    (is (instance? java.lang.AutoCloseable c))
+                    (is (not (map? c)))
+                    (is (not (coll? c)))
+                    (is (= 15 (bump c 5)))
+                    (is (= 20 (bump c 5)))))
+
+                (testing "0016 B — closing twice is a no-op, using a closed handle throws"
+                  (let [^java.lang.AutoCloseable c (make 1)]
+                    (.close c)
+                    (is (nil? (.close c)))
+                    (is (thrown? clojure.lang.ExceptionInfo (bump c 1)))))
+
+                (testing "0016 D — handles the caller never destructured"
+                  (let [cs (two 100)]
+                    (is (= 2 (count cs)))
+                    (is (= 101 (bump (first cs) 1)))
+                    (is (= 102 (bump (second cs) 1)))
+                    (run! (fn [^java.lang.AutoCloseable c] (.close c)) cs)))
+
+                ;; Last: the trap this provokes poisons the instance, and every
+                ;; later call then fails with "cannot enter component instance"
+                ;; (the note in res.wat).
+                (testing "0016 C — lowering an own does not work yet"
+                  ;; wasmtime answers "mismatched resource types" for a handle
+                  ;; that came from this instance's own constructor and works
+                  ;; fine as a borrow. Whether the fault is the guest's
+                  ;; [resource-*] imports or what the host writes into the val
+                  ;; is unresolved. Asserted so the day it changes a test says
+                  ;; so, rather than a comment going stale.
+                  (let [e (is (thrown? clojure.lang.ExceptionInfo (consume (make 7))))]
+                    (is (re-find #"mismatched resource types" (ex-message e)))))))))
         (finally (.delete ^File c))))))
+
+(deftest an-instance-closes-handles-it-still-holds
+  ;; `0016` D: a handle outliving its store holds a dangling context, which is
+  ;; the one real use-after-free in this row. The instance owns the fix.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping handle-lifetime test")
+    (let [f (build-component! "res")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (let [leaked (with-open [i (host/instantiate a)]
+                           ;; Never closed by the caller, and two more the
+                           ;; caller never even named.
+                           ((i "local:res/bag@0.1.0#make-two") 1)
+                           ((i "local:res/bag@0.1.0#[constructor]counter") 2))]
+              ;; Closing twice is a no-op (`0016` B), so the evidence that the
+              ;; instance got there first is the handle's own state.
+              (is (= "#cljwit/resource[closed]" (str leaked))
+                  "the instance closed it on the way out"))))
+        (finally (.delete ^File f))))))

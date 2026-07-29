@@ -1,6 +1,8 @@
 # 0016 — `own<T>` handles, in both directions
 
-**Status:** proposed · 2026-07-30 · rewritten after an adversarial review built
+**Status:** accepted for A, B and D, which are implemented and tested.
+**C is open** — lowering an `own` is rejected by wasmtime with `mismatched
+resource types` and nobody knows why yet; see the end. · 2026-07-30 · rewritten after an adversarial review built
 the guest this note said it was missing. The file was `0016-resource-handles.md`
 until that review showed `borrow` is not a question this note can ask.
 
@@ -147,6 +149,33 @@ instead of it."
 - **The clone-on-lift being unnecessary** if a future wasmtime stops recycling
   the result val. Measured true today, and the failure is a silent resource
   leak, so it needs re-checking on upgrade.
+
+## C does not work, and the reason is not yet known
+
+Implemented and measured 2026-07-30. A handle that came from *this instance's
+own* `[constructor]counter`, and that works as a `borrow` across repeated
+`bump` calls, is refused when lowered into an `own` parameter:
+
+```
+call local:res/bag@0.1.0#consume: mismatched resource types
+```
+
+What has been ruled out: **the clone is not the cause** — skipping it entirely
+gives the identical message. What has not been separated is whether the fault
+is in the guest's `[resource-new]` / `[resource-rep]` / `[resource-drop]`
+imports resolving to a different resource type than the one in the exported
+interface, or in what the host writes into the val. A C control that does the
+same round trip would separate them, exactly as it did for `0013`.
+
+The test asserts the failure and its message, so the day this changes a test
+says so rather than a comment going stale. Everything else in this note is
+implemented: lifting an `own`, lowering into a `borrow`, `close` as
+`try { drop } finally { delete }`, and the instance closing what it still
+holds.
+
+**A side effect worth having**: chasing this added wasmtime's own error text to
+every `ok!`. `call … failed` became `call …: mismatched resource types`, which
+is what turned this from a guess into a bounded question.
 
 ## Notes for whoever writes the guest
 
