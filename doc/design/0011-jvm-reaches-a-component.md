@@ -166,12 +166,62 @@ moves with the rest.** So the case for it is stronger than speed alone — the
 reflective path is not just ~50× slower, it is *unpredictable*, which is what
 per-call allocation looks like. That is the one conclusion this run supports.
 
-**The methodological fault is the spike's own.** It measures every path in one
+**Redone properly, prediction recorded 2026-07-30.** The hot loop now calls
+through an interface proxy rather than `invokeWithArguments`, every error
+return is checked, and each path runs in its own JVM. `call_unchecked` is
+dropped: it was used incorrectly and an arm nobody can explain does not belong
+in a table. Predicted: the numbers **stop swinging** (the proxy was the only
+stable thing in the old run), and they come in **lower**, because ~400 ns of
+per-call boxing leaves the loop. Component and core-dynamic should keep roughly
+their old *ratio* — that part was consistent across all three runs at ~1.4× —
+so the Component Model adds tens of percent, not multiples. **Falsified if the
+proxy-bound numbers still swing**, which would mean the instability was never
+the binding.
+
+**The methodological fault was the spike's own.** It measured every path in one
 JVM, through the mechanism that is both the slowest and the least stable, so it
-contaminates its own numbers. Doing it properly means binding through proxies
-rather than `invokeWithArguments`, checking the error return on every call, and
-running each path in a fresh JVM. That is the next unit, and until it is done
-**no cost decomposition from this spike should be quoted.**
+contaminated its own numbers.
+
+### Redone, and now quotable — `bb spike-cost`, 2026-07-30
+
+Proxy-bound hot loop, every error return checked, one JVM per path. Two runs,
+median of 21 each:
+
+| | run 1 | run 2 | spread within a run |
+|---|---|---|---|
+| trivial native call, proxy | 7.5 | 7.1 | — |
+| **core module call** | **1575.4** | **1573.6** | 1.03× / 1.01× |
+| **component call** | **1929.9** | **1926.1** | 1.05× / 1.03× |
+
+The prediction holds on both halves that mattered: the swinging stopped —
+within-run spread fell from ~1.8× to **1.01–1.05×**, and the two runs agree to
+**0.2%** — and the numbers came in lower. The ratio prediction was close but
+wrong: **1.23×, not ~1.4×**.
+
+**So the cost is neither the binding nor the Component Model.**
+
+| | ns | share |
+|---|---|---|
+| the JVM→native binding | **7** | 0.4% |
+| the Component Model over a core call | **355** | 18% |
+| **wasmtime's core call itself** | **1567** | **81%** |
+
+An interface proxy makes the binding free — 7 ns against a 1.9 µs call — which
+settles the calling-convention question outright: **`cljwit.host` is pure
+Clojure and the binding is not worth optimising further.** And the Component
+Model's 23% is real but modest; `0007`'s canonical-ABI machinery is not what is
+expensive here.
+
+**What is expensive is one call into wasmtime, at ~1.57 µs**, which is far more
+than a wasm call should cost. The likely reason is that this is the *checked*
+path: `wasmtime_func_call` validates signatures and marshals `wasmtime_val_t`
+on every call. The core C API has `wasmtime_func_call_unchecked` for exactly
+that, and **the component API has no equivalent** — so if the 1.57 µs is the
+checked path's price, ~1.9 µs is the floor for component calls through this C
+API, and the lever is the Rust API's typed component calls behind a shim.
+
+That makes the next question concrete rather than a matter of preference:
+**can `call_unchecked` be driven correctly, and does it collapse the 1.57 µs?**
 
 ## Why this shape
 

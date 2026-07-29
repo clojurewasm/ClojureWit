@@ -11,10 +11,18 @@ _Short by design, and printed at every session start — so findings live in
 (`0011`): `MethodHandleProxies/asInterfaceInstance` behind a `definterface`
 gives a static call site at **7.7 ns** against `invokeWithArguments`' 396, so
 **`cljwit.host` can be pure Clojure** — no bytecode generation, no C shim. But
-a scalar component call costs **microseconds** — the exact figure is not
-established, because a decomposition attempt found the `invokeWithArguments`
-measurement swings ~1.8× run to run and one arm is reproducibly implausible
-(`0011`). The proxy, by contrast, measures 7.3 ns every time.
+a scalar component call costs **1.93 µs**, and the decomposition is now stable
+enough to quote — two runs agreeing to 0.2%, within-run spread 1.03× (`0011`):
+
+| | ns | share |
+|---|---|---|
+| the JVM→native binding | 7 | 0.4% |
+| the Component Model over a core call | 355 | 18% |
+| **wasmtime's core call itself** | **1567** | **81%** |
+
+**The binding is free and the Component Model is modest; one call into wasmtime
+is the cost.** That is the checked path — the core C API has
+`wasmtime_func_call_unchecked` and the component API has no equivalent.
 The C API offers only the dynamic call path; there is no typed equivalent of
 the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
 payloads under ~30 KB the call dominates the copy.**
@@ -31,11 +39,12 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Measure the call cost properly**, then decide whether it is acceptable.
-   The spike measures every path in one JVM through `invokeWithArguments` —
-   the slowest and least stable mechanism — so it contaminates its own numbers
-   (`0011`). Bind through proxies, check every error return, run each path in a
-   fresh JVM. Nothing about the cost should be quoted until then.
+1. **Can `wasmtime_func_call_unchecked` be driven correctly, and does it
+   collapse the 1.57 µs?** The earlier attempt measured it 2.4× *slower* than
+   the checked path, which cannot be right, so it was being used wrongly. If
+   the checked path is what costs, and components can only be called checked,
+   then ~1.9 µs is the floor through this C API and the lever is the Rust
+   API's typed component calls behind a shim. Concrete and testable.
 2. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).

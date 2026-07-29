@@ -97,15 +97,18 @@
                              (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
                                   "-M:dev" "-m" "cljwit.spike.component-call"))))}
 
-  spike-overhead {:doc  "S1 spike: what a downcall costs from Clojure, three ways. Needs `nix develop`."
-                  :task (if-not (System/getenv "CLJWIT_WASMTIME_LIB")
-                          (do (println "CLJWIT_WASMTIME_LIB is unset — run inside `nix develop`")
-                              (System/exit 1))
-                          (do (run "bb" "run" "spike-host")
-                              (run "wasm-tools" "parse" "dev/resources/add.wat"
-                                   "-o" "dev/resources/add.core.wasm")
-                              (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
-                                   "-M:dev" "-m" "cljwit.spike.call-overhead")))}
+  spike-cost  {:doc  "S1 spike: what one call costs. One JVM per path. Needs `nix develop`."
+               :task (if-not (System/getenv "CLJWIT_WASMTIME_LIB")
+                       (do (println "CLJWIT_WASMTIME_LIB is unset — run inside `nix develop`")
+                           (System/exit 1))
+                       (do (run "bb" "run" "spike-host")
+                           (run "wasm-tools" "parse" "dev/resources/add.wat"
+                                "-o" "dev/resources/add.core.wasm")
+                           ;; A fresh JVM per path: the previous attempt measured
+                           ;; them together and they contaminated each other.
+                           (doseq [p ["trivial" "core" "component"]]
+                             (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
+                                  "-M:dev" "-m" "cljwit.spike.call-cost" p))))}
 
   ;; The gate prints its own wall time on purpose. When it drifts past ~60s the
   ;; push-time hook stops being a good trade — and this is how that becomes
