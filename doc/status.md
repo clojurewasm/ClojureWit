@@ -17,10 +17,12 @@ _Short by design, and printed at every session start — so findings live in
    express today. What is left of `0012` is `map`, `list<T,N>`,
    `stream`/`future` and `error-context`, none of which are in a shipped
    release.
-2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
-   WASI requires them, and nothing has touched them. They also invalidate
-   `0014` E's argument-buffer reuse, which is safe today only because no guest
-   can call back.
+2. **Host imports.** The mechanism works — an FFM upcall stub reaches Clojure
+   from inside a component call (`bb spike-import`), pure Clojure, no C shim.
+   What is left is the `cljwit.host` API for declaring them. `0014` D and E
+   both **survive**: a host callback cannot re-enter the instance that is
+   executing (`wasm trap: cannot enter component instance`), so the nested
+   call that would clobber the argument buffer cannot happen.
 3. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
    cannot supply; `0015` declined to be the codegen layer that would, so the
    contract has to shrink instead.

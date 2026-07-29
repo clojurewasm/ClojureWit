@@ -17,7 +17,7 @@
   (:import [java.lang.foreign Arena Linker SymbolLookup MemorySegment
             FunctionDescriptor ValueLayout]
            [java.lang.invoke MethodHandle]
-           [java.util.concurrent.atomic AtomicBoolean]))
+           [java.util.concurrent.atomic AtomicBoolean AtomicReference]))
 
 (set! *warn-on-reflection* true)
 
@@ -579,7 +579,7 @@
     nil))
 
 (deftype Instance [^Artifact artifact ^Arena arena exports aliases sigs
-                   ^MemorySegment store ^AtomicBoolean closed ^AtomicBoolean in-call
+                   ^MemorySegment store ^AtomicBoolean closed ^AtomicReference in-call
                    registry]
   java.lang.AutoCloseable
   (close [_]
@@ -588,7 +588,7 @@
     ;; then throws, leaving the store never deleted and the arena never closed,
     ;; with every retry a silent no-op because the CAS already won.
     (when-not (.get closed)
-      (when-not (.compareAndSet in-call false true)
+      (when (some? (.compareAndExchange ^AtomicReference in-call nil (Thread/currentThread)))
         (throw (ex-info "cannot close while a call is in flight"
                         {:cljwit/error :concurrent-use})))
       (when (.compareAndSet closed false true)
@@ -663,7 +663,7 @@
    and reused; the result is lifted eagerly and nothing backed by it escapes
    (`0014` E)."
   [api ^Arena arena ^MemorySegment ctx ^MemorySegment f sig
-   ^AtomicBoolean closed ^AtomicBoolean in-call nm rt]
+   ^AtomicBoolean closed ^AtomicReference in-call nm rt]
   (let [ptypes  (mapv (comp lower-fn second) (:params sig))
         n       (count ptypes)
         rlift   (when (:result sig) (lift-fn (:result sig) rt))
@@ -679,9 +679,22 @@
       (when-not (= n (count vs))
         (throw (ex-info (str nm " takes " n " argument(s)")
                         {:cljwit/error :wrong-arity :cljwit/export nm})))
-      (when-not (.compareAndSet in-call false true)
-        (throw (ex-info "the store is already in use by another call"
-                        {:cljwit/error :concurrent-use :cljwit/export nm})))
+      ;; 0014 D is one flag doing two jobs. Which one it is depends on whether
+      ;; *this* thread already holds it: a host import calling back into the
+      ;; instance that is executing is nesting, which the component model also
+      ;; forbids ("wasm trap: cannot enter component instance"), and saying
+      ;; "another call" about it sends the reader looking for a second thread.
+      (let [me (Thread/currentThread)
+            holder (.compareAndExchange ^AtomicReference in-call nil me)]
+        (when (some? holder)
+          (throw (ex-info (if (identical? holder me)
+                            (str "re-entered the store while " nm
+                                 " was running — a component instance cannot be"
+                                 " re-entered, including from a host import")
+                            (str "the store is in use by " (.getName ^Thread holder)))
+                          {:cljwit/error (if (identical? holder me)
+                                           :reentrant :concurrent-use)
+                           :cljwit/export nm}))))
       (try
         (with-open [scratch (Arena/ofConfined)]
           (dotimes [i n]
@@ -700,7 +713,7 @@
             (when (seq ps)
               (reset! (:pending rt) [])
               (run! (fn [p] (invoke (:res-delete api) p)) ps)))
-          (.set in-call false))))))
+          (.set ^AtomicReference in-call nil))))))
 
 (defn instantiate
   "Instantiates a compiled component. Cheap — tens of microseconds — so a
@@ -719,7 +732,7 @@
                    (invoke (:instantiate api) clink ctx (.-ptr art) inst))
         ct    (invoke (:comp-type api) (.-ptr art))
         closed  (AtomicBoolean. false)
-        in-call (AtomicBoolean. false)
+        in-call (AtomicReference. nil)
         ;; 0016 D: one call can yield handles the caller never destructured, so
         ;; the instance keeps the list and closes what is left before deleting
         ;; the store a handle's context points into.

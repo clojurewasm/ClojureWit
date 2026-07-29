@@ -79,6 +79,16 @@ in-call flag, thrown on contention with the name of the thread already inside.
 It guards **every** entry, not only calls: `close`, and dropping a lifted
 `own<T>` handle, both take the context and are the same memory-unsafety.
 
+**Amended 2026-07-30, after host imports were shown to work.** The flag does
+two jobs, and only one of them is contention. A host import calling back into
+the instance that is executing is *nesting*, not concurrency — and the
+component model forbids that too: measured, `wasm trap: cannot enter component
+instance`. So throwing is right, and throwing *before* wasmtime traps is better,
+because a trap poisons the instance and every later call fails with the same
+message, hiding the cause. The flag now records the thread holding it, so
+re-entry says so (`:cljwit/error :reentrant`) instead of blaming a second
+thread that does not exist.
+
 ### E. Arguments reuse a buffer; results are lifted eagerly and never retained
 
 A result payload is **invalid after the next call on that function**. So every
@@ -97,6 +107,10 @@ recycles its own result allocation: measured, 300k `result` calls grow RSS by
 
 Argument buffers are built once per export and reused, which is safe for the
 same reason `0013` gives: the values are written immediately before the call.
+
+**This survives host imports**, which was not obvious and is now measured: the
+nested call that would clobber the buffer cannot happen, because a component
+instance cannot be re-entered at all.
 
 ## Why
 

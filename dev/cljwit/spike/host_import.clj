@@ -48,8 +48,20 @@
                                          (FunctionDescriptor/ofVoid ls))
                                      (into-array java.lang.foreign.Linker$Option []))))
             call (fn [^MethodHandle mh & as] (.invokeWithArguments mh ^java.util.List (vec as)))
-            ok!  (fn [what v] (when-not (.equals MemorySegment/NULL ^MemorySegment v)
-                                (throw (ex-info (str what " failed") {})))
+            emsg (fx "wasmtime_error_message" nil ADDR ADDR)
+            edel (fx "wasmtime_error_delete" nil ADDR)
+            ;; Reading wasmtime's own message is the difference between a
+            ;; bounded question and a guess — see 0016.
+            ok!  (fn [what v]
+                   (when-not (.equals MemorySegment/NULL ^MemorySegment v)
+                     (let [nm ^MemorySegment (.allocate arena (long 16))]
+                       (call emsg v nm)
+                       (let [n (.get nm I64 (long 0))
+                             p ^MemorySegment (.get nm ADDR (long 8))
+                             b (byte-array n)]
+                         (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
+                         (call edel v)
+                         (throw (ex-info (str what ": " (String. b "UTF-8")) {})))))
                    v)
             cstr (fn [^String t]
                    (let [b (.getBytes t "UTF-8")
@@ -58,6 +70,8 @@
                      (.set s I8 (long (alength b)) (byte 0))
                      s))
             seen (atom [])
+            reenter (atom nil)   ; set once `run` is resolvable
+            reentry (atom :not-tried)
             ;; The host function the guest imports. Reads one u32 out of the
             ;; argument val and writes one back — the same layout every other
             ;; lane in this repo uses.
@@ -67,6 +81,10 @@
                                    I32 (long UNION))
                            out ^MemorySegment (.reinterpret ^MemorySegment res (long VAL))]
                        (swap! seen conj v)
+                       ;; Does the component model let a host callback call
+                       ;; back into the instance that is currently executing?
+                       (when-let [f @reenter]
+                         (reset! reentry (try (f 1) (catch Exception ex (ex-message ex)))))
                        (.set out I8 (long 0) (byte KIND-U32))
                        (.set out I32 (long UNION) (int (* 2 v)))
                        MemorySegment/NULL)))
@@ -119,10 +137,21 @@
                      (throw (ex-info "no export run" {})))
             args   ^MemorySegment (.allocate arena (long VAL))
             res    ^MemorySegment (.allocate arena (long VAL))]
+        (reset! reenter
+                (fn [n]
+                  (let [a2 ^MemorySegment (.allocate arena (long VAL))
+                        r2 ^MemorySegment (.allocate arena (long VAL))]
+                    (.set a2 I8 (long 0) (byte KIND-U32))
+                    (.set a2 I32 (long UNION) (int n))
+                    (ok! "re-entrant func_call"
+                         (call (fx "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)
+                               f ctx a2 (long 1) r2 (long 1)))
+                    (.get r2 I32 (long UNION)))))
         (.set args I8 (long 0) (byte KIND-U32))
         (.set args I32 (long UNION) (int 20))
         (ok! "func_call" (call (fx "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64)
                                f ctx args (long 1) res (long 1)))
         (println "run(20) =" (.get res I32 (long UNION))
                  "  host saw" @seen
-                 "  (expected 41 and [20])")))))
+                 "  (expected 41 and [20])")
+        (println "re-entry from the host callback:" (pr-str @reentry))))))
