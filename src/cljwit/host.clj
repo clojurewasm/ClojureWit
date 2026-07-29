@@ -155,6 +155,16 @@
      :err-message   (b "wasmtime_error_message" nil ADDR ADDR)
      :err-delete    (b "wasmtime_error_delete" nil ADDR)
      :err-new       (b "wasmtime_error_new" ADDR ADDR)
+     ;; 0017 E: add_wasip2 on its own is not enough. Without a WASI context on
+     ;; the store the first WASI call panics in the C API and *aborts the
+     ;; process* -- measured, rc=134 -- rather than returning an error.
+     :add-wasip2    (b "wasmtime_component_linker_add_wasip2" ADDR ADDR)
+     :set-wasi      (b "wasmtime_context_set_wasi" ADDR ADDR ADDR)
+     :wasi-new      (b "wasi_config_new" ADDR)
+     :wasi-stdout   (b "wasi_config_inherit_stdout" nil ADDR)
+     :wasi-stderr   (b "wasi_config_inherit_stderr" nil ADDR)
+     :wasi-stdin    (b "wasi_config_inherit_stdin" nil ADDR)
+     :wasi-env      (b "wasi_config_inherit_env" nil ADDR)
      ;; 0017 C: wasmtime frees what an import callback writes, so a string
      ;; result cannot come from an Arena. libc's malloc is the allocator it
      ;; expects, and this is the only place in the library that needs one.
@@ -902,11 +912,26 @@
                            (long (count (.getBytes ^String fname "UTF-8")))
                            stub MemorySegment/NULL MemorySegment/NULL)))))))))
 
+(defn- enable-wasi!
+  "Adds every WASI 0.2 interface to the linker and gives the store a context.
+   Deny-by-default: a capability is inherited only when named, because the
+   alternative leaks the host's environment into the guest."
+  [api ^MemorySegment ctx clink {:keys [inherit-stdout inherit-stderr
+                                        inherit-stdin inherit-env]}]
+  (ok! api "add_wasip2" (invoke (:add-wasip2 api) clink))
+  (let [cfg (invoke (:wasi-new api))]
+    (when inherit-stdout (invoke (:wasi-stdout api) cfg))
+    (when inherit-stderr (invoke (:wasi-stderr api) cfg))
+    (when inherit-stdin  (invoke (:wasi-stdin api) cfg))
+    (when inherit-env    (invoke (:wasi-env api) cfg))
+    ;; The config is consumed even on error, so it is per-instantiate.
+    (ok! api "set_wasi" (invoke (:set-wasi api) ctx cfg))))
+
 (defn instantiate
   "Instantiates a compiled component. Cheap — tens of microseconds — so a
    store per request is the intended shape."
   (^Instance [^Artifact art] (instantiate art {}))
-  (^Instance [^Artifact art {:keys [imports]}]
+  (^Instance [^Artifact art {:keys [imports wasi]}]
    (closed! (.-closed art) "artifact")
    (let [^Engine e (.-engine art)
          _     (closed! (.-closed e) "engine")
@@ -921,6 +946,7 @@
         ;; report a trap with the cause gone.
          dead  (atom nil)
          _     (define-imports! api arena e ctx clink ct imports dead)
+         _     (when wasi (enable-wasi! api ctx clink wasi))
          inst  ^MemorySegment (.allocate arena (long INSTANCE))
          _     (ok! api "linker_instantiate"
                     (invoke (:instantiate api) clink ctx (.-ptr art) inst))

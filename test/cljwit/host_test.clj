@@ -26,7 +26,10 @@
                   (when-not (zero? exit)
                     (throw (ex-info (str "failed: " (pr-str args)) {:err err})))))]
      (run! "wasm-tools" "parse" (str "dev/resources/" base ".wat") "-o" (str core))
-     (run! "wasm-tools" "component" "embed" (str "dev/resources/" base ".wit") (str core) "-o" (str emb))
+     ;; A directory when the world needs a `deps/` tree, a file otherwise.
+     (let [d (io/file (str "dev/resources/" base))
+           w (if (.isDirectory d) (str d) (str "dev/resources/" base ".wit"))]
+       (run! "wasm-tools" "component" "embed" w (str core) "-o" (str emb)))
      (run! "wasm-tools" "component" "new" (str emb) "-o" (str out))
      out)))
 
@@ -460,4 +463,32 @@
                 (is (every? (fn [n] (= (when (pos? n) (* 10 n)) ((i "run-opt") n)))
                             (map (fn [k] (mod k 4)) (range 2000)))
                     "2000 calls, the threshold that caught the Arena pointer")))))
+        (finally (.delete ^File f))))))
+
+(deftest wasi
+  ;; `0017` E. `add_wasip2` on its own is not enough: without a WASI context on
+  ;; the store, the first WASI call panics inside the C API and **aborts the
+  ;; process** (rc=134) rather than returning an error. That failure cannot be
+  ;; asserted from inside a JVM test — it takes the JVM with it — so what is
+  ;; pinned here is that the wired-up path works and the unwired one is refused
+  ;; at instantiate, where it is still an exception.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping wasi test")
+    (let [f (build-component! "rnd")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (testing "without :wasi the import is simply missing, and is named"
+              (let [ex (is (thrown? clojure.lang.ExceptionInfo (host/instantiate a)))]
+                (is (re-find #"wasi:random/random" (ex-message ex)))))
+            (testing "with :wasi {} — deny-by-default — WASI is satisfied"
+              (with-open [i (host/instantiate a {:wasi {}})]
+                (let [rolls (repeatedly 20 (i "roll"))]
+                  (is (every? integer? rolls))
+                  (is (< 15 (count (distinct rolls)))
+                      "wasi:random returns random numbers, so they differ"))))
+            (testing "a capability is inherited only when named"
+              (with-open [i (host/instantiate a {:wasi {:inherit-stdout true}})]
+                (is (integer? ((i "roll")))
+                    "naming one capability does not break the rest")))))
         (finally (.delete ^File f))))))

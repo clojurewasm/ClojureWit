@@ -1,0 +1,7 @@
+// A hand-declared subset of the real wasi:random@0.2.0, so this repo can build
+// a WASI-importing component without vendoring the whole WASI WIT tree. The
+// signature is the real one; wasmtime satisfies it through add_wasip2.
+package wasi:random@0.2.0;
+interface random {
+  get-random-u64: func() -> u64;
+}
