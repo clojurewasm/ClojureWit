@@ -359,6 +359,10 @@
 (defn- val-of
   "Allocates one wasmtime_component_val_t in `arena` and lowers `v` into it."
   [lower alloc v]
+  ;; No `wasmtime_component_val_new` here. `0017` C said a boxed payload needs
+  ;; it; measured, it does not — the header's purpose for it is moving an
+  ;; embedder-owned val onto wasmtime's heap, and once `alloc` is `malloc` the
+  ;; val is already there. Adding it would allocate twice and free once.
   (let [m ^MemorySegment (alloc VAL)]
     (lower alloc m v)
     m))
@@ -575,6 +579,9 @@
             :record (mapcat (fn [[_ t]] (unimportable t)) (:fields tree))
             :enum nil
             :flags nil
+            :option (unimportable (:ty tree))
+            :result (concat (unimportable (:ok tree)) (unimportable (:err tree)))
+            :variant (mapcat (fn [[_ t]] (unimportable t)) (:cases tree))
             [(:kind tree)])))
 
 (defn- import-stub
@@ -804,6 +811,8 @@
                            :cljwit/export nm}))))
       (try
         (with-open [scratch (Arena/ofConfined)]
+          ;; The export direction keeps its arguments in a confined arena; the
+          ;; import direction hands wasmtime malloc'd memory it will free.
           (let [alloc (fn [k] (.allocate scratch (long k)))]
             (dotimes [i n]
               ((nth ptypes i) alloc (.asSlice args (long (* VAL i)) (long VAL)) (nth vs i))))

@@ -81,9 +81,17 @@ pointer, *one call succeeds*; 2000 abort the process (`rc=134`). A test that
 called once would have licensed the corruption. `host.clj`'s `lower-fn`
 allocates **every** payload from a `java.lang.foreign.Arena` — string bytes, list/tuple/record element buffers,
 flags name vectors, and the boxed vals behind `option`/`result`/`variant`.
-Handing wasmtime an Arena pointer to `free()` is heap corruption. The import
-direction needs `malloc` and `wasmtime_component_val_new`, so `lower-fn` needs
-an allocator parameter rather than a hard-wired arena.
+Handing wasmtime an Arena pointer to `free()` is heap corruption, so `lower-fn`
+needs an allocator parameter rather than a hard-wired arena.
+
+**Amended after implementing it: `wasmtime_component_val_new` is not needed.**
+This note said a boxed payload — `option`, `result`, `variant` — required it.
+Measured: with `identity` in its place, 2000 calls survive, the same threshold
+that catches an Arena pointer. The header's purpose for `val_new` is moving an
+*embedder-owned* val onto wasmtime's heap; once the byte allocator is `malloc`
+the val is already there, so calling it would allocate twice and free once. An
+RSS comparison over 300k calls could not separate the two — JVM heap noise
+dominates — so the argument is the header's wording, not a measurement.
 
 This inverts `0014` E as well: there the host must never `val_delete` a result;
 here the host must never *retain* one.

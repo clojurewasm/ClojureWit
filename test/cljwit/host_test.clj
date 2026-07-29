@@ -431,7 +431,9 @@
                            a {:imports {"local:imps/host@0.1.0#mk"
                                         (fn [n] (apply str (repeat n "ab")))
                                         "local:imps/host@0.1.0#mklist"
-                                        (fn [n] (vec (range n)))}})]
+                                        (fn [n] (vec (range n)))
+                                        "local:imps/host@0.1.0#mkopt"
+                                        (fn [n] (when (pos? n) (* 10 n)))}})]
               (testing "a string crosses in both directions within one call"
                 (is (= "ababab" ((i "run") 3)))
                 (is (= "" ((i "run") 0)))
@@ -447,5 +449,15 @@
                 (is (= [] ((i "run-list") 0)))
                 (is (every? (fn [n] (= (vec (range n)) ((i "run-list") n)))
                             (map (fn [k] (mod k 9)) (range 500)))
-                    "and the element buffer is freed by wasmtime too")))))
+                    "and the element buffer is freed by wasmtime too"))
+              (testing "a boxed payload — 0017 C said this needed val_new; it does not"
+                ;; option, result and variant store a pointer to a val. Once the
+                ;; byte allocator is malloc, that val is already on the heap
+                ;; wasmtime frees, so wasmtime_component_val_new would allocate
+                ;; a second one and leak the first.
+                (is (= 30 ((i "run-opt") 3)))
+                (is (nil? ((i "run-opt") 0)))
+                (is (every? (fn [n] (= (when (pos? n) (* 10 n)) ((i "run-opt") n)))
+                            (map (fn [k] (mod k 4)) (range 2000)))
+                    "2000 calls, the threshold that caught the Arena pointer")))))
         (finally (.delete ^File f))))))

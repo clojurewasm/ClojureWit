@@ -5,9 +5,12 @@ interface host {
   mk: func(n: u32) -> string;
   /// An aggregate result: the bytes come from malloc, the elements are inline.
   mklist: func(n: u32) -> list<u32>;
+  /// A boxed payload: the pointer must come from wasmtime_component_val_new.
+  mkopt: func(n: u32) -> option<u32>;
 }
 world w {
   import host;
   export run: func(n: u32) -> string;
   export run-list: func(n: u32) -> list<u32>;
+  export run-opt: func(n: u32) -> option<u32>;
 }
