@@ -10,4 +10,9 @@ world echo {
   export echo-f32: func(v: f32) -> f32;
   export echo-f64: func(v: f64) -> f64;
   export echo-char: func(v: char) -> char;
+
+  /// The first aggregate row. Needs an exported memory and cabi_realloc, per
+  /// doc/design/0007 — but not a Rust toolchain, which is what the note first
+  /// assumed and what this disproves.
+  export echo-string: func(v: string) -> string;
 }

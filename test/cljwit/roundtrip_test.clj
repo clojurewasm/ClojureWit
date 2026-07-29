@@ -1,10 +1,11 @@
-(ns cljwit.scalar-roundtrip-test
-  "Turns `doc/design/0012`'s scalar rows from a table into a check.
+(ns cljwit.roundtrip-test
+  "Turns `doc/design/0012`'s mapping from a table into a check.
 
-   Every WIT type whose canonical ABI needs no linear memory can be echoed by a
-   hand-written WAT guest, so the mapping is testable today without the Rust or
-   C toolchain the aggregate types will need. A value leaves Clojure, crosses
-   the canonical ABI twice, and comes back.
+   A value leaves Clojure, crosses the canonical ABI twice, and comes back. The
+   guest is hand-written WAT — including for `string`, which needs an exported
+   memory and `cabi_realloc` but, it turns out, no Rust toolchain: an echo hands
+   back the pointer the host already lowered into its memory, so the whole guest
+   is a bump allocator and a stored pair.
 
    The lossy mappings `0012` letters — L2 `u64` above 2^63, L3 `f32`
    narrowing, L4 NaN canonicalisation, L5 the `char` surrogate hole — were
@@ -14,7 +15,10 @@
 
    Skips when wasmtime is not present, the same way `bb lint` skips without
    clj-kondo: the gate stays runnable on a machine that cannot run it, and CI
-   has the full toolchain."
+   has the full toolchain.
+
+   Still missing: `record`, `list`, `variant`, `option`, `result`. Each needs
+   its own ABI shape in the guest; none needs a toolchain this repo lacks."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.test :refer [deftest is testing]])
@@ -34,7 +38,12 @@
 ;; inferred: wasmtime_component_val_t is 32 bytes, kind:u8 at 0, union at 8.
 (def ^:private VAL 32)
 (def ^:private UNION 8)
-(def ^:private KIND {:bool 0 :s32 5 :u64 8 :f32 9 :f64 10 :char 11})
+(def ^:private KIND {:bool 0 :s32 5 :u64 8 :f32 9 :f64 10 :char 11 :string 12})
+
+;; wasm_name_t is {size_t size; char *data;} — 16 bytes, size at 0, data at 8 —
+;; measured against the pinned headers, and it sits at the union offset.
+(def ^:private STR-SIZE 0)
+(def ^:private STR-DATA 8)
 
 (def ^:private lib (System/getenv "CLJWIT_WASMTIME_LIB"))
 
@@ -132,7 +141,12 @@
                     (.set args I32 (long UNION) (int v)))
           :u64  (.set args I64 (long UNION) (long v))
           :f32  (.set args F32 (long UNION) (float v))
-          :f64  (.set args F64 (long UNION) (double v)))
+          :f64  (.set args F64 (long UNION) (double v))
+          :string (let [b   (.getBytes ^String v "UTF-8")
+                        buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
+                    (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
+                    (.set args I64 (long (+ UNION STR-SIZE)) (long (alength b)))
+                    (.set args ADDR (long (+ UNION STR-DATA)) buf)))
         (ok! (str "call " export) (call fcall f ctx args (long 1) res (long 1)))
         (ok! (str "post_return " export) (call fpost f ctx))
         (case kind
@@ -141,7 +155,12 @@
           :char (.get res I32 (long UNION))
           :u64  (.get res I64 (long UNION))
           :f32  (.get res F32 (long UNION))
-          :f64  (.get res F64 (long UNION)))))))
+          :f64  (.get res F64 (long UNION))
+          :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
+                        p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
+                        b (byte-array n)]
+                    (MemorySegment/copy (.reinterpret p n) I8 0 b 0 (int n))
+                    (String. b "UTF-8")))))))
 
 (defn- with-echo
   "Builds the component, opens it, and calls `f` with the echo function. A
@@ -150,7 +169,7 @@
    hook is what caught that."
   [f]
   (if-not lib
-    (println "CLJWIT_WASMTIME_LIB unset — skipping scalar round-trip test")
+    (println "CLJWIT_WASMTIME_LIB unset — skipping round-trip test")
     (let [c (build-component!)]
       (try
         (with-open [a (Arena/ofConfined)]
@@ -203,6 +222,21 @@
           (is (= 0.0 out) "= cannot tell -0.0 from 0.0, which is why this row needs bits")
           (is (= (Double/doubleToRawLongBits -0.0) (Double/doubleToRawLongBits out))
               "the sign of zero does survive"))))))
+
+(deftest strings-round-trip
+  (with-echo
+    (fn [echo]
+      (testing "the first aggregate row — memory and cabi_realloc, no Rust toolchain"
+        (doseq [v ["" "hello" "日本語" "a\u0000b" (apply str (repeat 1000 "x"))]]
+          (is (= v (echo "echo-string" :string v)) (str "string " (pr-str v)))))
+      (testing "L6 — a string carrying an unpaired surrogate is not a WIT string"
+        ;; Java lets one exist; WIT's string is a sequence of scalar values.
+        ;; UTF-8 encoding replaces it rather than failing, so what comes back is
+        ;; not what went in — recorded because 0012 predicted it could not be
+        ;; lowered at all.
+        (let [lone (str (char 0xD800))]
+          (is (not= lone (echo "echo-string" :string lone))
+              "an unpaired surrogate does not survive the boundary"))))))
 
 (deftest char-boundaries
   (with-echo
