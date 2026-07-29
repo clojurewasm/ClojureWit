@@ -115,7 +115,7 @@ is unmeasured.** That is S0's residue and it belongs to S3.
 
 ## Incidents so far
 
-Eight, all on 2026-07-29/30 — the first two days. Each is written up where it
+Nine, all on 2026-07-29/30 — the first two days. Each is written up where it
 changed something; this is the index.
 
 - **The gate passed locally and failed in CI** — empty `src/` and `test/` that
@@ -132,6 +132,12 @@ changed something; this is the index.
   `doc/design/0007-*` carries the correction.
 - **Two design conclusions drawn from one-variable experiments** — `0009`'s rec
   group and `0003`'s runtime table — both corrected in place.
+- **The gate is not the same gate inside and outside `nix develop`.** A
+  macro-introduced binding linted clean under the flake's pinned clj-kondo and
+  failed under the ambient one. The push hook runs outside the shell and caught
+  it; **CI runs inside and would have missed it.** Left as-is rather than
+  pinned harder — two clj-kondos disagreeing is more coverage than one, and the
+  hook is the one that blocks. Recorded so the asymmetry is a decision.
 - **`git add -A` committed a design note the commit was not about.**
   `doc/design/0012` went in with a benchmark commit whose message never
   mentions it, minutes before a review found it wrong in most of its hard

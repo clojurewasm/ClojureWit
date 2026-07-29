@@ -1,0 +1,13 @@
+package local:cljwit@0.1.0;
+
+/// Every WIT type whose canonical ABI needs no linear memory, so the guest can
+/// be hand-written WAT and doc/design/0012's scalar rows become checkable
+/// without a Rust or C toolchain.
+world echo {
+  export echo-bool: func(v: bool) -> bool;
+  export echo-s32: func(v: s32) -> s32;
+  export echo-u64: func(v: u64) -> u64;
+  export echo-f32: func(v: f32) -> f32;
+  export echo-f64: func(v: f64) -> f64;
+  export echo-char: func(v: char) -> char;
+}
