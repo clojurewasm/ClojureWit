@@ -2,15 +2,19 @@
 
 **Status:** accepted · 2026-07-30
 
-> **Amended 2026-07-30 by `0013`, which falsified this note's central
-> attribution.** Everything below about *reaching* a component stands. The cost
-> accounting does not: "what is expensive is one call into wasmtime, at
-> ~1.57 µs" is **wrong**. wasmtime's floor is ~15 ns and the same C entry point
-> costs 75 ns from C, so ~96% of the figure is on the JVM side — not wasmtime's,
-> and not a floor. This note's error was structural, not arithmetic: **every
-> number in it was taken through the JVM, so no comparison could have shown
-> which side the cost was on.** The unchecked path's unexplained 2.4× slowdown
-> is likewise a driving error here, not a property of wasmtime — see `0013`.
+> **Amended 2026-07-30 by `0013`, which falsified this note's cost accounting.**
+> Everything about *reaching* a component stands. The numbers do not, and the
+> reason is that they were measured through a benchmark loop containing a
+> reflective `MemorySegment.get` costing ~1470 ns per call. Corrected: a core
+> call is 102.5 ns rather than 1645, a component call 392.8 rather than 2074,
+> and `wasmtime_func_call_unchecked` is 2.2× **faster** rather than 2.4× slower
+> — so the "contradiction with the documentation" this note left open never
+> existed. The Component Model is ~74% of a component call, not ~20%. The
+> `post_return` finding measured the harness; the function is deprecated and a
+> no-op in 47.0.1. This note's structural error stands as recorded: **every
+> number in it was taken through the JVM, so no comparison could show which
+> side the cost was on** — and, `0013` adds, none varied the Clojure in the
+> loop either.
 
 ## The question
 

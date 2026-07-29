@@ -1,6 +1,11 @@
 (ns cljwit.spike.call-cost
   "What one call costs, measured so the number can be quoted.
 
+;; A `MemorySegment.get` whose layout argument is untyped resolves reflectively,
+;; and a reflective 4-byte read costs ~1.5 us. That is not a style preference
+;; here: it silently became the headline number of two design notes.
+(set! *warn-on-reflection* true)
+
    Replaces the decomposition in `cljwit.spike.call-overhead`, which measured
    every path in one JVM through `invokeWithArguments` and so contaminated
    itself — see `doc/design/0011`. Three changes:
@@ -47,10 +52,10 @@
     ^java.lang.foreign.MemorySegment res ^long nres
     ^java.lang.foreign.MemorySegment trap]))
 
-(def ^:private ADDR ValueLayout/ADDRESS)
-(def ^:private I32 ValueLayout/JAVA_INT)
-(def ^:private I64 ValueLayout/JAVA_LONG)
-(def ^:private I8 ValueLayout/JAVA_BYTE)
+(def ^:private ^java.lang.foreign.AddressLayout ADDR ValueLayout/ADDRESS)
+(def ^:private ^java.lang.foreign.ValueLayout$OfInt I32 ValueLayout/JAVA_INT)
+(def ^:private ^java.lang.foreign.ValueLayout$OfLong I64 ValueLayout/JAVA_LONG)
+(def ^:private ^java.lang.foreign.ValueLayout$OfByte I8 ValueLayout/JAVA_BYTE)
 (def ^:private VAL-SIZE 32)
 (def ^:private UNION 8)
 (def ^:private KIND-S32 5)
@@ -110,11 +115,11 @@
                      (let [b (.getBytes t "UTF-8")
                            s ^MemorySegment (.allocate arena (long (inc (alength b))))]
                        (MemorySegment/copy ^bytes b 0 s I8 0 (alength b))
-                       (.set s I8 (long (alength b)) (byte 0))
+                       (.set s I8 (long (alength ^bytes b)) (byte 0))
                        s))
             slurp-wasm (fn [f] (.readAllBytes (io/input-stream (io/file f))))
             to-seg (fn [^bytes b]
-                     (let [s ^MemorySegment (.allocate arena (long (alength b)))]
+                     (let [s ^MemorySegment (.allocate arena (long (alength ^bytes b)))]
                        (MemorySegment/copy b 0 s I8 0 (alength b))
                        s))]
         (case path
@@ -138,7 +143,7 @@
               (let [b     (slurp-wasm "dev/resources/add.core.wasm")
                     mout  (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
                     _     (ok! "module_new" (setup-call (fx "wasmtime_module_new" ADDR ADDR ADDR I64 ADDR)
-                                                        engine (to-seg b) (long (alength b)) mout))
+                                                        engine (to-seg b) (long (alength ^bytes b)) mout))
                     modul (.get ^MemorySegment mout ADDR (long 0))
                     inst  (.allocate arena (long 16))
                     trap  (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
@@ -193,7 +198,7 @@
               (let [b     (slurp-wasm "dev/resources/add.component.wasm")
                     cout  (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
                     _     (ok! "component_new" (setup-call (fx "wasmtime_component_new" ADDR ADDR ADDR I64 ADDR)
-                                                           engine (to-seg b) (long (alength b)) cout))
+                                                           engine (to-seg b) (long (alength ^bytes b)) cout))
                     comp  (.get ^MemorySegment cout ADDR (long 0))
                     clink (setup-call (fx "wasmtime_component_linker_new" ADDR ADDR) engine)
                     inst  (.allocate arena (long 16))
@@ -211,7 +216,7 @@
                     _     (doseq [[i v] (map-indexed vector [17 25])]
                             (let [base (long (* i VAL-SIZE))]
                               (.set args I8 base (byte KIND-S32))
-                              (.set args I32 (+ base UNION) (int v))))
+                              (.set args I32 (long (+ base UNION)) (int v))))
                     p ^ComponentCall (MethodHandleProxies/asInterfaceInstance
                                       ComponentCall (fx "wasmtime_component_func_call" ADDR ADDR ADDR ADDR I64 ADDR I64))]
                 (report "component call (proxy)"

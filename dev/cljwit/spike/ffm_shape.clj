@@ -1,6 +1,11 @@
 (ns cljwit.spike.ffm-shape
   "Does an FFM downcall get expensive because of its *shape*?
 
+;; A `MemorySegment.get` whose layout argument is untyped resolves reflectively,
+;; and a reflective 4-byte read costs ~1.5 us. That is not a style preference
+;; here: it silently became the headline number of two design notes.
+(set! *warn-on-reflection* true)
+
    `0013` measured the same `wasmtime_func_call` at 75 ns from C and 1645 ns
    through FFM, while a trivial one-int downcall costs 7 ns in the same run.
    Two explanations survive that: FFM is slow for seven-parameter,
@@ -21,9 +26,9 @@
 
 (definterface IntToInt (^int call [^int x]))
 
-(def ^:private ADDR ValueLayout/ADDRESS)
-(def ^:private I32 ValueLayout/JAVA_INT)
-(def ^:private I64 ValueLayout/JAVA_LONG)
+(def ^:private ^java.lang.foreign.AddressLayout ADDR ValueLayout/ADDRESS)
+(def ^:private ^java.lang.foreign.ValueLayout$OfInt I32 ValueLayout/JAVA_INT)
+(def ^:private ^java.lang.foreign.ValueLayout$OfLong I64 ValueLayout/JAVA_LONG)
 
 ;; No primitive hints: Clojure caps those at four arguments per fn.
 (defn- report [label f n reps warmup]

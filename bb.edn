@@ -97,6 +97,29 @@
                              (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
                                   "-M:dev" "-m" "cljwit.spike.component-call"))))}
 
+  reflection  {:doc  "Fail if any namespace resolves a call reflectively. See 0013."
+               :task (let [nss (->> (concat (babashka.fs/glob "src" "**.clj")
+                                            (babashka.fs/glob "dev" "**.clj")
+                                            (babashka.fs/glob "test" "**.clj"))
+                                    (map (fn [f] (-> (str f)
+                                                     (clojure.string/replace (re-pattern "^(src|dev|test)/") "")
+                                                     (clojure.string/replace (re-pattern "\\.clj$") "")
+                                                     (clojure.string/replace "/" ".")
+                                                     (clojure.string/replace "_" "-"))))
+                                    sort)
+                         form (str "(binding [*warn-on-reflection* true] (require "
+                                   (clojure.string/join " " (map (fn [n] (str "'" n)) nss))
+                                   "))")
+                         res  (babashka.process/shell {:out :string :err :string :continue true}
+                                                      "clojure" "-M:dev" "-e" form)
+                         warns (->> (clojure.string/split-lines (str (:err res)))
+                                    (filter (fn [l] (clojure.string/includes? l "Reflection warning"))))]
+                     (when (seq warns)
+                       (run! println warns)
+                       (println (format "\n%d reflective call(s). A reflective MemorySegment read cost this project two design notes." (count warns)))
+                       (System/exit 1))
+                     (println (format "no reflective calls in %d namespaces" (count nss))))}
+
   spike-ffm-shape {:doc "Is an FFM downcall expensive because of its shape? See 0013."
                    :task (do (babashka.fs/create-dirs "target")
                              (let [so (str "target/libnoop7"
@@ -133,6 +156,6 @@
   ;; push-time hook stops being a good trade — and this is how that becomes
   ;; visible, without a rule anyone has to remember to read.
   check       {:doc     "The gate. Everything a change must pass; CI runs exactly this."
-               :depends [check-tools lint fmt-check test]
+               :depends [check-tools lint fmt-check reflection test]
                :task    (println (format "\n✓ gate green (%.1fs)"
                                          (/ (- (System/currentTimeMillis) start-ms) 1000.0)))}}}

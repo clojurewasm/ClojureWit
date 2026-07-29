@@ -1,6 +1,11 @@
 (ns cljwit.roundtrip-test
   "Turns `doc/design/0012`'s mapping from a table into a check.
 
+;; A `MemorySegment.get` whose layout argument is untyped resolves reflectively,
+;; and a reflective 4-byte read costs ~1.5 us. That is not a style preference
+;; here: it silently became the headline number of two design notes.
+(set! *warn-on-reflection* true)
+
    A value leaves Clojure, crosses the canonical ABI twice, and comes back. The
    guest is hand-written WAT — including for `string`, which needs an exported
    memory and `cabi_realloc` but, it turns out, no Rust toolchain: an echo hands
@@ -27,12 +32,12 @@
             SymbolLookup ValueLayout]
            [java.lang.invoke MethodHandle]))
 
-(def ^:private ADDR ValueLayout/ADDRESS)
-(def ^:private I8 ValueLayout/JAVA_BYTE)
-(def ^:private I32 ValueLayout/JAVA_INT)
-(def ^:private I64 ValueLayout/JAVA_LONG)
-(def ^:private F32 ValueLayout/JAVA_FLOAT)
-(def ^:private F64 ValueLayout/JAVA_DOUBLE)
+(def ^:private ^java.lang.foreign.AddressLayout ADDR ValueLayout/ADDRESS)
+(def ^:private ^java.lang.foreign.ValueLayout$OfByte I8 ValueLayout/JAVA_BYTE)
+(def ^:private ^java.lang.foreign.ValueLayout$OfInt I32 ValueLayout/JAVA_INT)
+(def ^:private ^java.lang.foreign.ValueLayout$OfLong I64 ValueLayout/JAVA_LONG)
+(def ^:private ^java.lang.foreign.ValueLayout$OfFloat F32 ValueLayout/JAVA_FLOAT)
+(def ^:private ^java.lang.foreign.ValueLayout$OfDouble F64 ValueLayout/JAVA_DOUBLE)
 
 ;; Measured against the pinned wasmtime 47.0.1 headers with a C program, not
 ;; inferred: wasmtime_component_val_t is 32 bytes, kind:u8 at 0, union at 8.
@@ -140,7 +145,9 @@
         ;; Required after any call that returns, before the next one. Omitting
         ;; it does not return an error — wasmtime panics in a function that
         ;; cannot unwind and the process aborts, taking the JVM with it.
-        fpost  (fx "wasmtime_component_func_post_return" ADDR ADDR ADDR)]
+        ;; No post_return: deprecated and a no-op in 47.0.1, which
+        ;; wasmtime_component_func_call now handles itself (0013).
+        ]
     (fn [^String export kind v]
       (let [nm   (cstr export)
             idx  (call eidx inst ctx MemorySegment/NULL nm (long (count export)))
@@ -207,12 +214,12 @@
                   ;; one `option<u32>`
                   (inner [x] (val-of 18
                                      (fn [^MemorySegment m]
-                                       (.set m ADDR (long UNION)
-                                             (if (= :none x)
-                                               MemorySegment/NULL
-                                               (u32val (second x)))))))]
-            (.set args ADDR (long UNION)
-                  (if (= :none v) MemorySegment/NULL (inner (second v)))))
+                                       (let [^MemorySegment q (if (= :none x)
+                                                                MemorySegment/NULL
+                                                                (u32val (second x)))]
+                                         (.set m ADDR (long UNION) q)))))]
+            (let [^MemorySegment q (if (= :none v) MemorySegment/NULL (inner (second v)))]
+              (.set args ADDR (long UNION) q)))
           ;; [:ok v] / [:err e] — the *type* mapping. The throwing form is
           ;; sugar defined on top of this, and is exercised below.
           :result
@@ -288,7 +295,6 @@
                     (.set args I64 (long (+ UNION STR-SIZE)) (long (alength b)))
                     (.set args ADDR (long (+ UNION STR-DATA)) buf)))
         (ok! (str "call " export) (call fcall f ctx args (long 1) res (long 1)))
-        (ok! (str "post_return " export) (call fpost f ctx))
         (case kind
           :bool (not= 0 (.get res I8 (long UNION)))
           :s32  (.get res I32 (long UNION))
@@ -392,7 +398,7 @@
       (try
         (with-open [a (Arena/ofConfined)]
           (f (open-echo a c)))
-        (finally (.delete c))))))
+        (finally (.delete ^java.io.File c))))))
 
 (deftest scalars-round-trip
   (with-echo

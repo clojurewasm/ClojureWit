@@ -93,22 +93,22 @@
   ;; them invalidate every object ever allocated by the other build, which is
   ;; why doc/design/0009 requires the shared group to be frozen and versioned.
   (testing "a changed field type"
-    (is (not (shares-heap? core {:decl (.replace prelude "field $hash (mut i32)"
+    (is (not (shares-heap? core {:decl (.replace ^String prelude "field $hash (mut i32)"
                                                  "field $hash (mut i64)")
                                  :type "$obj"}))))
   (testing "field mutability"
-    (is (not (shares-heap? core {:decl (.replace prelude "field $hash (mut i32)"
+    (is (not (shares-heap? core {:decl (.replace ^String prelude "field $hash (mut i32)"
                                                  "field $hash i32")
                                  :type "$obj"}))))
   (testing "final instead of open to subtyping"
-    (is (not (shares-heap? core {:decl (.replace prelude "(type $obj (sub (struct"
+    (is (not (shares-heap? core {:decl (.replace ^String prelude "(type $obj (sub (struct"
                                                  "(type $obj ((struct")
                                  :type "$obj"}))))
   (testing "one more type added to the shared group — the sharpest edge"
     ;; Adding an arity to doc/design/0004's $vtables means a new $fnN/$vtN pair
     ;; inside this group, so this is not hypothetical: it is what supporting one
     ;; more arity costs.
-    (is (not (shares-heap? core {:decl (.replace prelude "(type $obj (sub (struct"
+    (is (not (shares-heap? core {:decl (.replace ^String prelude "(type $obj (sub (struct"
                                                  "(type $spacer (struct (field $z i32)))
                                                   (type $obj (sub (struct")
                                  :type "$obj"})))))

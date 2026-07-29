@@ -8,25 +8,33 @@ _Short by design, and printed at every session start — so findings live in
 ## Next
 
 **The calling convention is decided and the cost structure is measured**
-(`0011`): `MethodHandleProxies/asInterfaceInstance` behind a `definterface`
-gives a static call site at **7.7 ns** against `invokeWithArguments`' 396, so
-**`cljwit.host` can be pure Clojure** — no bytecode generation, no C shim. But
-a scalar component call costs **a couple of microseconds** — stated as an order
-of magnitude because six runs put the same measurement between 1.56 and 2.84 µs
-while holding within 1.02× *inside* each run (`0011`). What the numbers support:
+(`0011`, corrected by `0013`): `MethodHandleProxies/asInterfaceInstance` behind
+a `definterface` gives a static call site at **7.4 ns** against
+`invokeWithArguments`' 396, so **`cljwit.host` can be pure Clojure** — no
+bytecode generation, no C shim needed for the *binding*. A scalar component
+call costs **~0.39 µs**, and every lane has a control on the other side of the
+boundary:
 
-- **The JVM→native binding is negligible** — ~7 ns against microseconds. So
-  **`cljwit.host` is pure Clojure** and the binding is not worth optimising.
-- **The Component Model adds roughly 20%** over a core module call, measured as
-  a within-run ratio.
-- **`wasmtime_func_call_unchecked` is not the lever** — it is 1.7–3.0× *slower*
-  than the checked path in every run, which the header says is impossible. The C
-  API layer and buffer alignment are both ruled out; wasmtime's own
-  `Func::call_unchecked` is unexamined and this is not pursued further, because
-  it blocks nothing.
-The C API offers only the dynamic call path; there is no typed equivalent of
-the core module's `_call_unchecked`. **Against B6 this inverts the emphasis: for
-payloads under ~30 KB the call dominates the copy.**
+| entry point | Rust | C | JVM/FFM |
+|---|---:|---:|---:|
+| typed / `func_call_unchecked` | 15.2 | 15.5 | 46.1 |
+| untyped `Val` / `func_call` | 61.7 | 75.4 | 102.5 |
+| component call | — | — | 392.8 |
+
+- **wasmtime's floor is 15 ns**, agreed to 2% by Rust and C independently.
+- **The JVM adds a flat ~27–31 ns**, not a multiple. The binding is not worth
+  optimising, which `0011` had right for the wrong reason.
+- **The Component Model is ~74% of a component call** — 3.8× a core call, not
+  the ~20% `0011` claimed. It is where the money is.
+- **`wasmtime_func_call_unchecked` *is* the fast path** — 2.2× faster from the
+  JVM, 4.9× from C, exactly as its header says. `0011`'s "1.7–3.0× slower" was
+  an artifact.
+- **`wasmtime_component_func_post_return` is deprecated and a no-op** in 47.0.1.
+
+The C API offers only the untyped component path; the Rust API has typed
+component calls, and **whether that recovers the Component Model's 3.8× is the
+open question a shim would answer** (`0013`). **Against B6 this inverts the
+emphasis: for payloads under ~30 KB the call dominates the copy.**
 
 **S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
 component and calls it from the JVM through FFM — engine, store, component,
@@ -40,12 +48,10 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Find the mechanism behind `0013`'s 21×.** A component call costs ~2.07 µs
-   from Clojure and the same C entry point costs 75 ns from C. Seven
-   hypotheses are eliminated; what survives is executing wasmtime's JIT'd code
-   on a JVM thread, with macOS arm64's per-thread W^X as the leading untested
-   mechanism. **Running S0 and `bb spike-c-cost`/`bb spike-cost` on x86_64
-   Linux discriminates it and settles S0's untried axis at the same time.**
+1. **Measure a component call from C or Rust.** `0013`'s "the Component Model
+   is 3.8× a core call" is a cross-lane figure with no control on the other
+   side — the largest gap in the accounting, and the one that decides whether a
+   Rust shim with typed component calls is worth building.
 2. **Design `cljwit.host`'s API.** The calling convention is decided (interface
    proxies, pure Clojure). Do not shape the API around a microsecond floor:
    `0013` shows there is no such floor, and an API shaped around a cost is hard

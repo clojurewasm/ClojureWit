@@ -2,6 +2,11 @@
   "S1's first question, answered by running it: can the JVM get a value across a
    Wasm component boundary?
 
+;; A `MemorySegment.get` whose layout argument is untyped resolves reflectively,
+;; and a reflective 4-byte read costs ~1.5 us. That is not a style preference
+;; here: it silently became the headline number of two design notes.
+(set! *warn-on-reflection* true)
+
    This is a spike, not `cljwit.host`. It hand-rolls the smallest path through
    wasmtime's component C API — engine, store, component, linker, instantiate,
    look up an export, call it — with no abstraction, so that what the real
@@ -30,10 +35,10 @@
             SymbolLookup ValueLayout]
            [java.lang.invoke MethodHandle]))
 
-(def ^:private ADDR ValueLayout/ADDRESS)
-(def ^:private I32 ValueLayout/JAVA_INT)
-(def ^:private I64 ValueLayout/JAVA_LONG)
-(def ^:private I8 ValueLayout/JAVA_BYTE)
+(def ^:private ^java.lang.foreign.AddressLayout ADDR ValueLayout/ADDRESS)
+(def ^:private ^java.lang.foreign.ValueLayout$OfInt I32 ValueLayout/JAVA_INT)
+(def ^:private ^java.lang.foreign.ValueLayout$OfLong I64 ValueLayout/JAVA_LONG)
+(def ^:private ^java.lang.foreign.ValueLayout$OfByte I8 ValueLayout/JAVA_BYTE)
 
 (def ^:private VAL-SIZE 32)
 (def ^:private VAL-UNION-OFFSET 8)
@@ -140,7 +145,7 @@
         (doseq [[i v] (map-indexed vector [17 25])]
           (let [base (long (* i VAL-SIZE))]
             (.set args I8 base (byte KIND-S32))
-            (.set args I32 (+ base VAL-UNION-OFFSET) (int v))))
+            (.set args I32 (long (+ base VAL-UNION-OFFSET)) (int v))))
         (err-message "func_call" (call func-call func ctx args (long 2) res (long 1)))
         (let [kind (.get res I8 (long 0))
               out  (.get res I32 (long VAL-UNION-OFFSET))]
