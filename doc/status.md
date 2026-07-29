@@ -51,23 +51,21 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **`cljwit.host` marshals every row `0012` accepts.** `src/cljwit/host.clj`
-   implements `0014` and covers the scalars, `string`, `enum`, `option`,
-   `result`, `variant`, `list` and `record` — types compiled from the
-   component's own reflected type tree, not hard-coded. `resource`,
-   `flags`, `tuple`, `stream`/`future` and `map` fail at instantiation naming
-   the kind. Functions inside WIT interfaces are reached too, keyed
-   `"pkg:name/iface@ver#func"`, and `dev/resources/zoo.wit` holds it to a
-   component with resources, flags, tuples and deep nesting that no guest here
-   was written to match. **What is left for S1 is the
-   `require`-a-component surface**, which is how `doc/roadmap.md` states the
-   stage.
-2. **`0012`'s `ex-data` contract needs a decision.** It promises the WIT type
-   name in a thrown `result`, and reflection cannot supply one — the C API has
-   no accessor for a type's own name. Either the contract shrinks or the name
-   comes from the codegen layer.
-3. **S1 is not done until the `require`-a-component surface exists**, which is
-   how `doc/roadmap.md` states it. `0014` is the primitive under it.
+1. **`flags`, `tuple` and `own`/`borrow` marshalling.** `cljwit.host` covers
+   the scalars, `string`, `enum`, `option`, `result`, `variant`, `list` and
+   `record`, compiled from the component's own reflected type tree — but **6 of
+   the 8 exports in `dev/resources/zoo.wit` are still uncallable**, and that is
+   the binding constraint on S1, not ergonomics (`0015`).
+2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
+   WASI requires them, and nothing has touched them. They also invalidate
+   `0014` E's argument-buffer reuse, which is safe today only because no guest
+   can call back.
+3. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
+   cannot supply; `0015` declined to be the codegen layer that would, so the
+   contract has to shrink instead.
+4. **`require`-a-component is deferred, not pending** (`0015`). When it is
+   picked up it should be a generated `.clj`, not a macro, and the instance
+   should not be ambient.
 
 ## Where we are
 

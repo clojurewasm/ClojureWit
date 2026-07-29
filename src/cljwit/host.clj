@@ -456,13 +456,17 @@
                    ^MemorySegment store ^AtomicBoolean closed ^AtomicBoolean in-call]
   java.lang.AutoCloseable
   (close [_]
-    (when (.compareAndSet closed false true)
-      ;; 0014 D: close is an entry into the store like any other.
+    ;; 0014 D: close is an entry into the store like any other. Take `in-call`
+    ;; *before* flipping `closed` — the other order marks the instance closed,
+    ;; then throws, leaving the store never deleted and the arena never closed,
+    ;; with every retry a silent no-op because the CAS already won.
+    (when-not (.get closed)
       (when-not (.compareAndSet in-call false true)
         (throw (ex-info "cannot close while a call is in flight"
                         {:cljwit/error :concurrent-use})))
-      (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
-      (.close arena))
+      (when (.compareAndSet closed false true)
+        (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
+        (.close arena)))
     nil)
   clojure.lang.ILookup
   (valAt [this k] (.valAt ^clojure.lang.ILookup this k ::none))
