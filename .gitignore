@@ -1,0 +1,10 @@
+/.cpcache/
+/target/
+/out/
+/.tools/
+/.cljwit/
+*.wasm
+!bench/**/*.wasm
+.DS_Store
+.nrepl-port
+/result

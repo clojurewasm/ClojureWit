@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Put the two things a session cannot start without into context: where the
+# project is, and what just happened.
+set -uo pipefail
+cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" || exit 0
+if [ -f doc/status.md ]; then
+  # Surface staleness rather than trusting the file: if status has not been
+  # touched since several commits ago, it is probably describing the past.
+  behind=$(git rev-list --count "$(git log -1 --format=%H -- doc/status.md)"..HEAD 2>/dev/null || echo 0)
+  printf '=== doc/status.md ===\n'
+  [ "${behind:-0}" -gt 3 ] && printf '!! %s commits since this file was last updated — verify before trusting it\n\n' "$behind"
+  cat doc/status.md
+fi
+printf '\n=== recent commits ===\n'
+git log -5 --oneline --decorate 2>/dev/null || true

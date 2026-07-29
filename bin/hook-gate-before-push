@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Nothing leaves this machine unverified: `git push` runs the gate first.
+#
+# Gating on PUSH rather than COMMIT is deliberate — commits stay cheap and
+# frequent, and the gate runs once at the boundary that actually matters.
+# When `bb check` grows past roughly a minute, that trade stops working; the
+# replacement is a stamp file written by the gate and checked here. Do not
+# pre-build that until the gate is actually slow.
+set -uo pipefail
+cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" || exit 0
+
+payload=$(cat)
+cmd=$(printf '%s' "$payload" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null) \
+  || { echo "hook: could not read the command — refusing to guess" >&2; exit 2; }
+
+[[ "$cmd" == *"git push"* ]] || exit 0
+
+if ! out=$(bb check 2>&1); then
+  {
+    echo "✗ push blocked: \`bb check\` is not green."
+    echo
+    echo "$out" | tail -30
+    echo
+    echo "Fix it, or run \`bb check\` yourself to see the whole output."
+  } >&2
+  exit 2
+fi
+exit 0

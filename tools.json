@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Toolchain SSOT. flake.nix installs these; bin/check-tools verifies a non-Nix machine.",
+    "`required` means the gate fails without it. A tool flips to required when the stage",
+    "that needs it lands — see doc/roadmap.md. Keep this file and flake.nix in step."
+  ],
+  "tools": {
+    "clojure":    { "min": "1.12.0",  "required": true,  "why": "the project itself" },
+    "java":       { "min": "21",      "required": true,  "why": "Clojure host (22+ for the FFM/wasmtime path in S1)" },
+    "bb":         { "min": "1.12.0",  "required": true,  "why": "task runner" },
+    "wasm-tools": { "min": "1.230.0", "required": true,  "why": "wat->wasm, validate, component new" },
+    "node":       { "min": "22.0.0",  "required": false, "why": "S0: the V8 lane (WasmGC + speculative inlining)" },
+    "wasmtime":   { "min": "43.0.0",  "required": false, "why": "S0: the server lane. WASI 0.3 needs 43+, default-on at 46" },
+    "binaryen":   { "min": "119",     "required": false, "why": "S0: wasm-opt, the Wasm->Wasm optimizer" }
+  }
+}

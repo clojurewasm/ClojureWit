@@ -1,0 +1,46 @@
+#!/usr/bin/env bb
+;; Verify the local toolchain against tools.json (the SSOT flake.nix also tracks).
+;; Nix users get this for free; this exists so a non-Nix machine fails loudly
+;; and specifically instead of producing confusing downstream errors.
+(require '[babashka.fs :as fs] '[cheshire.core :as json] '[clojure.string :as str]
+         '[babashka.process :refer [sh]])
+
+(def probes
+  {"clojure"    ["clojure" "--version"]
+   "java"       ["java" "-version"]
+   "bb"         ["bb" "--version"]
+   "wasm-tools" ["wasm-tools" "--version"]
+   "wasmtime"   ["wasmtime" "--version"]
+   "binaryen"   ["wasm-opt" "--version"]
+   "node"       ["node" "--version"]})
+
+(defn version-of [cmd]
+  (let [{:keys [out err exit]} (apply sh cmd)]
+    (when (zero? exit)
+      (some->> (str out err) (re-find #"\d+(\.\d+)*") first))))
+
+(defn cmp [a b]
+  (letfn [(parts [v] (map parse-long (str/split (or v "0") #"\.")))]
+    (compare (vec (parts a)) (vec (parts b))))) ; nil-safe enough for our shapes
+
+(let [{:strs [tools]} (json/parse-string (slurp "tools.json"))
+      rows (for [[name {:strs [min required why]}] tools
+                 :let [[bin & _ :as cmd] (probes name)
+                       have (when (fs/which bin) (version-of cmd))]]
+             {:tool name :min min :have have :why why :required required
+              :ok (and have (>= (cmp have min) 0))})
+      missing (remove :ok (sort-by :tool rows))]
+  (doseq [{:keys [tool min have ok required]} (sort-by :tool rows)]
+    (println (format "%-12s %-11s %s" tool (or have "-")
+                     (cond ok "ok"
+                           required (str "MISSING, required (need >= " min ")")
+                           :else (str "not installed (need >= " min " when you reach the stage that uses it)")))))
+  (let [blocking (filter :required missing)]
+    (when (seq missing)
+      (println)
+      (doseq [{:keys [tool why]} missing]
+        (println (format "  %-12s %s" tool why))))
+    (if (empty? blocking)
+      (do (println "\n✓ toolchain ok for the current stage") (System/exit 0))
+      (do (println "\n✗ missing required tools. `nix develop`, or install them.")
+          (System/exit 1)))))

@@ -1,0 +1,55 @@
+;; Task runner. `bb tasks` lists everything.
+;; These are the only sanctioned entry points — CI, the push hook, and humans
+;; all call them, so there is exactly one definition of "does it pass".
+{:min-bb-version "1.12.0"
+ :tasks
+ {:requires ([babashka.fs :as fs]
+             [babashka.process :as p]
+             [clojure.string :as str])
+
+  ;; A failing task reports the tool's own output plus one line, not a babashka
+  ;; stack trace — the trace buries the part you actually need.
+  :init (do
+          (def start-ms (System/currentTimeMillis))
+          (defn run [& args]
+          (let [{:keys [exit]} (apply p/shell {:continue true} args)]
+            (when-not (zero? exit)
+              (println (str "\n✗ failed: " (str/join " " args)))
+              (System/exit exit)))))
+
+  check-tools {:doc  "Verify the local toolchain against tools.json"
+               :task (run "bin/check-tools")}
+
+  test        {:doc  "Unit tests (JVM)"
+               :task (if (seq (fs/glob "test" "**.clj"))
+                       (run "clojure" "-X:test")
+                       (println "no tests yet — skipping"))}
+
+  lint        {:doc  "clj-kondo over the source tree"
+               :task (if (fs/which "clj-kondo")
+                       (run "clj-kondo" "--lint" "src" "test" "bench")
+                       (println "clj-kondo not installed — skipping"))}
+
+  fmt-check   {:doc  "cljfmt check"
+               :task (if (fs/which "cljfmt")
+                       (run "cljfmt" "check" "src" "test")
+                       (println "cljfmt not installed — skipping"))}
+
+  bench-s0    {:doc  "S0 dispatch benchmarks (V8 + wasmtime). See bench/s0/README.md"
+               :task (let [need (remove fs/which ["wasmtime" "wasm-opt" "node" "wasm-tools"])]
+                       (cond
+                         (seq need)
+                         (do (println (str "S0 needs: " (str/join ", " need)))
+                             (println "  nix develop      (exact versions), or see tools.json")
+                             (System/exit 1))
+                         (not (fs/exists? "bench/s0/run.clj"))
+                         (println "S0 not written yet — bench/s0/README.md is its contract")
+                         :else (run "bb" "bench/s0/run.clj")))}
+
+  ;; The gate prints its own wall time on purpose. When it drifts past ~60s the
+  ;; push-time hook stops being a good trade — and this is how that becomes
+  ;; visible, without a rule anyone has to remember to read.
+  check       {:doc     "The gate. Everything a change must pass; CI runs exactly this."
+               :depends [check-tools lint fmt-check test]
+               :task    (println (format "\n✓ gate green (%.1fs)"
+                                         (/ (- (System/currentTimeMillis) start-ms) 1000.0)))}}}
