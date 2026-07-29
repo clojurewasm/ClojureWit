@@ -62,7 +62,8 @@
 ;; The translation the two enums force on anything driven by reflection.
 (def ^:private VAL-KIND
   {:bool 0 :s8 1 :u8 2 :s16 3 :u16 4 :s32 5 :u32 6 :s64 7 :u64 8
-   :f32 9 :f64 10 :char 11 :string 12})
+   :f32 9 :f64 10 :char 11 :string 12
+   :flags 20 :tuple 15})
 
 (defn- lib-path []
   (or (System/getenv "CLJWIT_WASMTIME_LIB")
@@ -122,6 +123,10 @@
      :enum-nth      (b "wasmtime_component_enum_type_names_nth" BOOL ADDR I64 ADDR ADDR)
      :rec-count     (b "wasmtime_component_record_type_field_count" I64 ADDR)
      :rec-nth       (b "wasmtime_component_record_type_field_nth" BOOL ADDR I64 ADDR ADDR ADDR)
+     :flags-count   (b "wasmtime_component_flags_type_names_count" I64 ADDR)
+     :flags-nth     (b "wasmtime_component_flags_type_names_nth" BOOL ADDR I64 ADDR ADDR)
+     :tup-count     (b "wasmtime_component_tuple_type_types_count" I64 ADDR)
+     :tup-nth       (b "wasmtime_component_tuple_type_types_nth" BOOL ADDR I64 ADDR)
      :var-count     (b "wasmtime_component_variant_type_case_count" I64 ADDR)
      :var-nth       (b "wasmtime_component_variant_type_case_nth" BOOL ADDR I64 ADDR ADDR ADDR ADDR)
      :linker-new    (b "wasmtime_component_linker_new" ADDR ADDR)
@@ -189,6 +194,19 @@
       :result {:kind :result
                :ok  (sub-valtype api arena (:result-ok api) of)
                :err (sub-valtype api arena (:result-err api) of)}
+      :flags  (let [[pp lp] (name-pair arena)]
+                {:kind :flags
+                 :names (mapv (fn [i]
+                                (invoke (:flags-nth api) of (long i) pp lp)
+                                (read-name pp lp))
+                              (range (invoke (:flags-count api) of)))})
+      :tuple  (let [ft ^MemorySegment (.allocate arena (long VALTYPE))]
+                {:kind :tuple
+                 :types (mapv (fn [i]
+                                (invoke (:tup-nth api) of (long i) ft)
+                                (let [t (valtype->tree api arena ft)]
+                                  (invoke (:vt-delete api) ft) t))
+                              (range (invoke (:tup-count api) of)))})
       :enum   (let [[pp lp] (name-pair arena)]
                 {:kind :enum
                  :cases (mapv (fn [i]
@@ -316,6 +334,26 @@
                                               MemorySegment/NULL
                                               (val-of f arena payload))]
                        (.set seg ADDR (long VAR-VAL) q)))))
+      ;; A set of keywords on this side, the names that are on over there.
+      ;; Written in declaration order so the wire form is canonical.
+      :flags (let [names (:names tree)]
+               (fn [^Arena arena ^MemorySegment seg v]
+                 (let [on  (filterv (fn [n] (contains? v (keyword n))) names)
+                       buf ^MemorySegment (.allocate arena (long (max 1 (* 16 (count on)))))]
+                   (dotimes [i (count on)]
+                     (write-name! arena buf (* 16 i) (nth on i)))
+                   (.set seg I8 (long 0) (byte 20))
+                   (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count on)))
+                   (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
+      :tuple (let [els (mapv lower-fn (:types tree))]
+               (fn [^Arena arena ^MemorySegment seg v]
+                 (let [n   (count els)
+                       buf ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))]
+                   (dotimes [i n]
+                     ((nth els i) arena (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
+                   (.set seg I8 (long 0) (byte 15))
+                   (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
+                   (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
       :list (let [el (lower-fn (:element tree))]
               (fn [^Arena arena ^MemorySegment seg v]
                 (let [n   (count v)
@@ -369,6 +407,17 @@
                      (if (and f (not (.equals MemorySegment/NULL p)))
                        [(keyword nm) (f (.reinterpret p (long VAL)))]
                        [(keyword nm)]))))
+      :flags (fn [^MemorySegment seg]
+               (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
+                     p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
+                     b (.reinterpret p (long (* 16 n)))]
+                 (into #{} (map (fn [i] (keyword (read-str b (* 16 i))))) (range n))))
+      :tuple (let [els (mapv lift-fn (:types tree))]
+               (fn [^MemorySegment seg]
+                 (let [p ^MemorySegment (.get seg ADDR (long (+ UNION VEC-DATA)))
+                       b (.reinterpret p (long (* VAL (count els))))]
+                   (mapv (fn [i] ((nth els i) (.asSlice b (long (* VAL i)) (long VAL))))
+                         (range (count els))))))
       :list (let [el (lift-fn (:element tree))]
               (fn [^MemorySegment seg]
                 (let [n (.get seg I64 (long (+ UNION VEC-SIZE)))
@@ -399,6 +448,8 @@
             :option (unsupported (:ty tree))
             :result (concat (unsupported (:ok tree)) (unsupported (:err tree)))
             :enum nil
+            :flags nil
+            :tuple (mapcat unsupported (:types tree))
             :record (mapcat (fn [[_ t]] (unsupported t)) (:fields tree))
             :variant (mapcat (fn [[_ t]] (unsupported t)) (:cases tree))
             [(:kind tree)])))

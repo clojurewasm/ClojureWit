@@ -51,11 +51,11 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **`flags`, `tuple` and `own`/`borrow` marshalling.** `cljwit.host` covers
-   the scalars, `string`, `enum`, `option`, `result`, `variant`, `list` and
-   `record`, compiled from the component's own reflected type tree — but **6 of
-   the 8 exports in `dev/resources/zoo.wit` are still uncallable**, and that is
-   the binding constraint on S1, not ergonomics (`0015`).
+1. **`own`/`borrow` — resource handles.** `flags` and `tuple` now marshal, so
+   6 of `dev/resources/zoo.wit`'s 8 exports are callable and the four that are
+   not are all resource methods. `0012` has no accepted Clojure representation
+   for a handle, and mishandling one is a use-after-free that takes the JVM
+   down rather than a wrong answer — so this needs a design note before code.
 2. **Host imports.** `0014` names them as its most-likely-to-fire falsifier,
    WASI requires them, and nothing has touched them. They also invalidate
    `0014` E's argument-buffer reuse, which is safe today only because no guest

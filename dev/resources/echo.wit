@@ -45,4 +45,10 @@ world echo {
   export echo-list-u32: func(v: list<u32>) -> list<u32>;
   record pair { n: u32, label: string }
   export echo-pair: func(v: pair) -> pair;
+
+  /// The two remaining value types: a set of names on the wire, and a
+  /// positional product distinguished from `list` only by its type.
+  flags perms { read, write, exec }
+  export echo-perms: func(v: perms) -> perms;
+  export echo-tuple: func(v: tuple<u32, string>) -> tuple<u32, string>;
 }

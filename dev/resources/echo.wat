@@ -10,7 +10,7 @@
   ;; assertions, and it runs out after roughly 1500 string calls. Any
   ;; "instantiate once, call many" benchmark of the aggregate rows needs a real
   ;; allocator here, not a cljwit.host bug report.
-  (global $next (mut i32) (i32.const 96))
+  (global $next (mut i32) (i32.const 112))
   (func (export "cabi_realloc")
         (param $old i32) (param $old-sz i32) (param $align i32) (param $new-sz i32)
         (result i32)
@@ -80,6 +80,18 @@
     (i32.store (i32.const 84) (local.get $ptr))
     (i32.store (i32.const 88) (local.get $len))
     (i32.const 80))
+
+  ;; Up to 32 flags flatten to one i32 bitfield.
+  (func (export "echo-perms") (param $bits i32) (result i32)
+    (local.get $bits))
+
+  ;; A tuple flattens like a record and returns through a retptr: u32 at 0,
+  ;; then the string's (ptr, len). Twelve bytes at 96.
+  (func (export "echo-tuple") (param $n i32) (param $ptr i32) (param $len i32) (result i32)
+    (i32.store (i32.const 96) (local.get $n))
+    (i32.store (i32.const 100) (local.get $ptr))
+    (i32.store (i32.const 104) (local.get $len))
+    (i32.const 96))
 
   (func (export "echo-bool") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-s32") (param $v i32) (result i32) (local.get $v))

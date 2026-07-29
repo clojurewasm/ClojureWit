@@ -1,8 +1,9 @@
 # 0012 — The WIT ⇄ Clojure type mapping
 
-**Status:** accepted for the rows the echo test covers; `proposed` for the
-rest (`tuple`, `flags`, `own`/`borrow`, `map`, `list<T,N>`, `stream`/`future`,
-`error-context`) — see "What would falsify this". Rewritten 2026-07-30
+**Status:** accepted for the rows an executable test covers — which now
+includes `tuple` and `flags`, through `cljwit.host` rather than the hand-rolled
+echo test (`test/cljwit/host_test.clj`). `proposed` for the rest
+(`own`/`borrow`, `map`, `list<T,N>`, `stream`/`future`, `error-context`) — see "What would falsify this". Rewritten 2026-07-30
 after review found the first draft wrong in most of its hard cases; what it got
 wrong is recorded at the end rather than quietly fixed. · 2026-07-30
 

@@ -65,7 +65,7 @@
         (is (= #{"echo-bool" "echo-s32" "echo-u64" "echo-f32" "echo-f64"
                  "echo-char" "echo-string" "echo-colour" "echo-option-u32"
                  "echo-option-option-u32" "echo-result" "echo-shape"
-                 "echo-list-u32" "echo-pair"}
+                 "echo-list-u32" "echo-pair" "echo-perms" "echo-tuple"}
                (set (host/exports i)))))
       (testing "the reflected signature, which is what marshalling is built from"
         (is (= {:params [["v" :string]] :result :string}
@@ -153,6 +153,20 @@
         (is (= {:n 4294967295 :label "日本語"}
                ((:echo-pair i) {:n 4294967295 :label "日本語"}))))
 
+      (testing "flags is a set of keywords, tuple a vector — 0012's last two value rows"
+        (is (= {:params [["v" {:kind :flags :names ["read" "write" "exec"]}]]
+                :result {:kind :flags :names ["read" "write" "exec"]}}
+               (host/signature i "echo-perms")))
+        (is (= {:params [["v" {:kind :tuple :types [:u32 :string]}]]
+                :result {:kind :tuple :types [:u32 :string]}}
+               (host/signature i "echo-tuple")))
+        (doseq [v [#{} #{:read} #{:read :exec} #{:read :write :exec}]]
+          (is (= v ((:echo-perms i) v)) (str "perms " (pr-str v))))
+        (doseq [v [[0 ""] [7 "hi"] [4294967295 "日本語"]]]
+          (is (= v ((:echo-tuple i) v)) (str "tuple " (pr-str v))))
+        (is (vector? ((:echo-tuple i) [1 "a"]))
+            "a tuple lifts as a vector, which only its type tells apart from a list"))
+
       (testing "L1 — nesting collapses, as 0012 says it must"
         ;; option<option<u32>> has three inhabitants and nil/value has two, so
         ;; `some(none)` cannot be expressed. Asserted rather than hidden.
@@ -223,12 +237,22 @@
                                       :err :string}}}
                        (host/signature i "local:zoo/shapes@0.3.0#take-nested"))))
 
-              (testing "a type we cannot marshal fails by name, not by wrong answer"
-                (doseq [[nm kind] [["take-flags" :flags] ["take-tuple" :tuple]
-                                   ["[constructor]counter" :own]]]
+              (testing "only the resource handles are still unmarshallable"
+                (doseq [[nm kind] [["[constructor]counter" :own]
+                                   ["[method]counter.bump" :borrow]]]
                   (let [f (i (str "local:zoo/shapes@0.3.0#" nm))
                         e (is (thrown? clojure.lang.ExceptionInfo (f nil)))]
                     (is (= :unsupported-type (:cljwit/error (ex-data e))) nm)
                     (is (some #{kind} (:cljwit/kinds (ex-data e)))
-                        (str nm " should name " kind))))))))
+                        (str nm " should name " kind)))))
+
+              (testing "flags and tuple now marshal, and reach the guest"
+                ;; --dummy traps, so getting a wasmtime error rather than an
+                ;; :unsupported-type one is the evidence that lowering worked.
+                (doseq [[nm arg] [["take-flags" #{:read}]
+                                  ["take-tuple" [1 "x"]]]]
+                  (let [f (i (str "local:zoo/shapes@0.3.0#" nm))
+                        e (is (thrown? clojure.lang.ExceptionInfo (f arg)))]
+                    (is (= :wasmtime (:cljwit/error (ex-data e)))
+                        (str nm " should reach the guest and trap"))))))))
         (finally (.delete ^File c))))))
