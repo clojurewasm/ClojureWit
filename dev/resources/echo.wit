@@ -24,4 +24,8 @@ world echo {
   /// option's host representation is a pointer: NULL for none. That is what
   /// makes 0012's L1 a loss on the Clojure side rather than at the boundary.
   export echo-option-u32: func(v: option<u32>) -> option<u32>;
+
+  /// The row that makes L1 concrete: none and some(none) are distinct here and
+  /// both become nil in Clojure.
+  export echo-option-option-u32: func(v: option<option<u32>>) -> option<option<u32>>;
 }

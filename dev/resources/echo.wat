@@ -6,7 +6,7 @@
   ;; one means handing back the same (ptr, len) — no copy. What it does need is
   ;; the two things doc/design/0007 named: an exported memory and cabi_realloc.
   (memory (export "memory") 1)
-  (global $next (mut i32) (i32.const 16))
+  (global $next (mut i32) (i32.const 32))
   (func (export "cabi_realloc")
         (param $old i32) (param $old-sz i32) (param $align i32) (param $new-sz i32)
         (result i32)
@@ -35,6 +35,15 @@
     (i32.store (i32.const 8) (local.get $disc))
     (i32.store (i32.const 12) (local.get $val))
     (i32.const 8))
+
+  ;; option<option<u32>> flattens to three core values; its return area is the
+  ;; twelve bytes at 16.
+  (func (export "echo-option-option-u32")
+        (param $d0 i32) (param $d1 i32) (param $v i32) (result i32)
+    (i32.store (i32.const 16) (local.get $d0))
+    (i32.store (i32.const 20) (local.get $d1))
+    (i32.store (i32.const 24) (local.get $v))
+    (i32.const 16))
 
   (func (export "echo-bool") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-s32") (param $v i32) (result i32) (local.get $v))

@@ -156,10 +156,16 @@ is no behaviour to diverge from. These are lossy points in a new library's API.
 They are lettered here, and divergence numbers stay reserved for the compiler,
 where the oracle exists.
 
-- **L1 — nested `option`.** `option<option<T>>` maps `none` and `some(none)`
-  both to `nil`. Round-tripping one is unsupported. Wrapping every `some` would
-  be injective and would make single-level `option` — overwhelmingly the common
-  case — unidiomatic.
+- **L1 — nested `option`. Demonstrated, not predicted.**
+  `test/cljwit/roundtrip_test.clj` echoes `option<option<u32>>` and shows the
+  boundary keeping `none`, `some(none)` and `some(some(9))` distinct — then
+  applies this note's rule and shows the first two collapsing to `nil`.
+  **Nothing is lost crossing the wire; the loss is that `nil` is the only thing
+  `none` can become, so a second level has nowhere to go.** Round-tripping a
+  nested option is unsupported. Wrapping every `some` would be injective and
+  would make single-level `option` — overwhelmingly the common case —
+  unidiomatic. The assertion is in the test, so changing the mapping breaks a
+  test rather than a paragraph.
 - **L2 — `u64` above 2^63.** Lifts as `BigInt`, so the *type* of a lifted `u64`
   depends on its value.
 - **L3 — `f32` narrowing.** `(= 0.1 (double (float 0.1)))` is **false**. No

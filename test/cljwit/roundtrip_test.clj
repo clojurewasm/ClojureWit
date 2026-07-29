@@ -39,7 +39,7 @@
 (def ^:private VAL 32)
 (def ^:private UNION 8)
 (def ^:private KIND {:bool 0 :u32 6 :u64 8 :s32 5 :f32 9 :f64 10 :char 11
-                     :string 12 :enum 17 :option-u32 18})
+                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18})
 
 ;; wasm_name_t is {size_t size; char *data;} — 16 bytes, size at 0, data at 8 —
 ;; measured against the pinned headers, and it sits at the union offset.
@@ -162,6 +162,35 @@
                                 ;; value the ABI accepts.
                                 (.set inner I32 (long UNION) (unchecked-int v))
                                 inner)))
+          ;; Lowered from and lifted to a *faithful* tagged form — :none,
+          ;; [:some :none], [:some [:some n]] — so the boundary can be checked
+          ;; without 0012's mapping in the way. The mapping's own loss is
+          ;; asserted separately, in pure Clojure.
+          ;; Lowered from and lifted to a *faithful* tagged form — :none,
+          ;; [:some :none], [:some [:some n]] — so the boundary can be checked
+          ;; without 0012's mapping in the way. The mapping's own loss is
+          ;; asserted separately, in pure Clojure.
+          ;;
+          ;; Written out per level rather than recursively: the type is exactly
+          ;; two options deep, and a recursive lowering wrapped a third.
+          :option-option-u32
+          (letfn [(val-of [kind write!]
+                    (let [m ^MemorySegment (.allocate arena (long VAL))]
+                      (.set m I8 (long 0) (byte kind))
+                      (write! m)
+                      m))
+                  (u32val [n] (val-of (KIND :u32)
+                                      (fn [^MemorySegment m]
+                                        (.set m I32 (long UNION) (unchecked-int n)))))
+                  ;; one `option<u32>`
+                  (inner [x] (val-of 18
+                                     (fn [^MemorySegment m]
+                                       (.set m ADDR (long UNION)
+                                             (if (= :none x)
+                                               MemorySegment/NULL
+                                               (u32val (second x)))))))]
+            (.set args ADDR (long UNION)
+                  (if (= :none v) MemorySegment/NULL (inner (second v)))))
           :string (let [b   (.getBytes ^String v "UTF-8")
                         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
@@ -187,6 +216,18 @@
                           ;; as -1.
                           (bit-and (long (.get (.reinterpret p VAL) I32 (long UNION)))
                                    0xFFFFFFFF)))
+          ;; Per level, like the lowering. The outer pointer already means
+          ;; "the outer option is some", so recursing on it drops a level.
+          :option-option-u32
+          (let [outer ^MemorySegment (.get res ADDR (long UNION))]
+            (if (.equals MemorySegment/NULL outer)
+              :none
+              (let [ov  (.reinterpret outer VAL)
+                    innr ^MemorySegment (.get ov ADDR (long UNION))]
+                [:some (if (.equals MemorySegment/NULL innr)
+                         :none
+                         [:some (bit-and (long (.get (.reinterpret innr VAL) I32 (long UNION)))
+                                         0xFFFFFFFF)])])))
           :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
                         p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
                         b (byte-array n)]
@@ -289,6 +330,34 @@
         (is (not= (echo "echo-option-u32" :option-u32 nil)
                   (echo "echo-option-u32" :option-u32 0))
             "none and some(0) stay distinct across the boundary")))))
+
+(defn- as-0012
+  "doc/design/0012's rule applied to the faithful form: `none` becomes nil, and
+   `some(v)` becomes whatever v becomes."
+  [x]
+  (cond (= :none x) nil
+        (vector? x) (as-0012 (second x))
+        :else x))
+
+(deftest nested-option-is-where-the-mapping-loses
+  (with-echo
+    (fn [echo]
+      (testing "the boundary keeps all three apart"
+        (doseq [v [:none [:some :none] [:some [:some 9]]]]
+          (is (= v (echo "echo-option-option-u32" :option-option-u32 v))
+              (str "faithful " (pr-str v)))))
+
+      (testing "L1 — and 0012's mapping collapses two of them into nil"
+        ;; This is the letter made concrete. Nothing is lost crossing the wire;
+        ;; the loss is that `nil` is the only thing `none` can become, so a
+        ;; second level has nowhere to go. Asserted rather than described, so
+        ;; that changing the mapping breaks a test rather than a paragraph.
+        (is (nil? (as-0012 :none)))
+        (is (nil? (as-0012 [:some :none])))
+        (is (= (as-0012 :none) (as-0012 [:some :none]))
+            "none and some(none) are indistinguishable under 0012's rule")
+        (is (= 9 (as-0012 [:some [:some 9]]))
+            "a nested some still carries its value")))))
 
 (deftest char-boundaries
   (with-echo
