@@ -59,6 +59,13 @@ server, so CIDER/Calva connect with no extra machinery.
 written by hand — `wit-bindgen` has no Clojure backend, and adding one is its
 own project.
 
+**Sized, 2026-07-29** (`doc/design/0007-*`): no Canonical ABI that any runtime
+executes carries GC references across a component boundary, so this stage is a
+lift/lower layer over **linear memory**, plus `cabi_realloc`, plus resource
+handle tables. Scalar-only exports skip all of it. The sibling zwasm's
+equivalent is 8,574 lines and required no core changes — bounded work rather
+than a research problem, but a stage, not a detail of one.
+
 ### S5 onward — decided by what S0–S4 measured
 
 Persistent collections, the numeric tower, protocols and multimethods, the
@@ -77,6 +84,12 @@ guessing.
   worse where the JVM can use primitives. See `doc/design/0004-*`.
 
 ## Open questions we know we have
+
+- **What does a boundary crossing cost?** Every S0 benchmark measures dispatch
+  *inside* the module. "A Rust developer calls a Clojure component" is a
+  GC-to-linear-memory copy per aggregate argument, and it is unmeasured. This
+  is the pitch's own claim, so it deserves a benchmark — in S0 alongside the
+  other four, or at the head of S1.
 
 - Does the engine's speculative inlining reach us on the server, where wasmtime
   has no adaptive tier? (`doc/design/0003-*`)

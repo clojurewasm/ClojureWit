@@ -53,6 +53,18 @@ A change is done when all of these hold. *How* you get there is yours to choose.
 - **No private paths, no machine-specific assumptions.** Anything referenced in
   a committed file must be reachable by someone who just cloned the repo.
   Sibling projects are cited by URL, never by local path.
+- **The outside world is checked, not remembered.** This project sits on a spec
+  surface that moved twice in the last year. Every external claim a decision
+  rests on carries a **date and a URL in the design note that uses it**, and is
+  re-verified before it is built on again. `/survey` is how; `bb ref` clones the
+  sources.
+- **One experiment characterises one variant, not the domain.** If A and B
+  differ in several ways, their difference names none of them; if a tool has
+  one path and you ran it, you know about that path. Vary the suspected cause
+  alone, and ask what a negative result was incapable of showing you. This has
+  now cost this project three times in one day — twice in `bench/`, once in a
+  design note that stated the opposite of what a second command proved
+  (`doc/design/0007-*`).
 - **Semantics are not negotiable for speed.** If a Clojure program observably
   behaves differently here than under `clojure`, that is a bug or a numbered,
   documented divergence — never an unremarked difference.
@@ -66,11 +78,23 @@ A change is done when all of these hold. *How* you get there is yours to choose.
 - The gate reports its own wall time, so "it got slow" surfaces by itself.
 - CI runs `bb check` and nothing else, so the local gate cannot drift from it.
 
-**Add machinery when a specific failure has happened twice — not in
-anticipation.** The sibling projects carry dozens of rules each; every one of
-them was paid for by an incident. Copying them here before the matching
-incident would be cargo cult, and this repo is small enough that a wrong rule
-is more expensive than a missing one.
+**This scaffolding is a work product, revised like one — in all three
+directions.** It is edited under the same standard of evidence as the code.
+
+- **Add** machinery when a specific failure has happened twice, in the cheapest
+  layer that prevents it — hook, then rule, then prose — naming the incident.
+  Not in anticipation: the sibling projects carry dozens of rules each, every
+  one paid for by an incident, and copying them here first would be cargo cult.
+  An exception needs the argument written down (`doc/design/0006-*` has one).
+- **Remove** when a rule's failure can no longer happen, or when it has never
+  fired and nothing here would produce it. A wrong or unearned rule is more
+  expensive than a missing one: it costs context on every turn and misleads
+  about which risks are real.
+- **Reduce** in preference to adding. Over-specified *procedure* measurably
+  degrades agent results (`doc/design/0006-*`) — state what must be true and
+  leave the route open.
+
+Review it whenever an incident is recorded, not on a schedule.
 
 ## Working with the sibling projects
 

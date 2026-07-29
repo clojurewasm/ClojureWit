@@ -31,6 +31,31 @@ removing the load by specializing the call site. `wasm-opt -O3` will not do it.
 Written up in `doc/design/0002-measure-first.md`; `doc/design/0004-*` carries an
 amendment naming the prediction that failed.
 
+## Surveyed 2026-07-29 — the component boundary is linear memory
+
+The first `/survey` found something S0 had been built on top of without
+checking: **no Canonical ABI that any runtime executes carries WasmGC
+references across a component boundary.** In the spec, `gc` is not a
+`canonopt`; in `wasm-tools 1.254.0` a `(canon lift … gc)` validates behind an
+off-by-default flag; in `wasmtime 47.0.1` it panics; and `wasm-tools component
+new` has no GC path at all. So the boundary is linear memory: a GC core module
+exporting `func(s32,s32)->s32` becomes a component with no memory anywhere,
+but change one parameter to `string` and it demands `memory`, then
+`cabi_realloc`.
+
+Consequences are in `doc/design/0007-*`: S4 is a lift/lower layer over linear
+memory (8,574 lines in the sibling zwasm, no core changes), scalar-only exports
+skip it entirely, and **S0 does not measure the crossing the pitch rests on**.
+`doc/roadmap.md` carries that as an open question.
+
+Also confirmed while there: WASI 0.3.0 shipped 2026-06-11 and wasmtime 43+
+supports it (`tools.json` was already right); the widely repeated "wasmtime
+does not support WasmGC" is stale — wasmtime 47 runs B1; and
+[Kotlin/sample-wasi-http-kotlin](https://github.com/Kotlin/sample-wasi-http-kotlin)
+is an official JetBrains prototype doing **both halves of what this project
+does** — a WasmGC module componentized and served by wasmtime. It is the
+closest existing artifact and should be read before S4 is designed.
+
 ## Next
 
 **S0 — B2, B3, B4.** Same contract, `bench/s0/README.md`; run them with
@@ -71,6 +96,23 @@ it at 0.11 ns. That question is closed.
   skipping S0. Re-run this check after any change to `.claude/`.
 
 ## Incidents so far
+
+- **2026-07-29 — a stage was entered without checking what it stood on.** S0's
+  four benchmarks were designed, and one of them built and measured, before
+  anyone asked whether a WasmGC module could be a component at all. The answer
+  changes the size of S4. Nothing was wasted — B1 stands — but it could have
+  been a whole stage. One incident, not two; `doc/design/0006-*` argues the
+  exception rather than pretending to a count, and the fix is the `/survey`
+  skill reached from `/next` step 1.
+- **2026-07-29 — the survey's own conclusion was over-generalised, and the
+  design note stated the opposite of what one more command proved.** `0007`
+  first claimed outright that GC references cannot cross a component boundary,
+  from three runs of `wasm-tools component new` — a tool with no GC support to
+  find. Hand-writing a `(canon lift … gc)` validated in under a minute with the
+  same pinned binary. **Third occurrence in one day** of generalising from an
+  experiment that varied one thing; the rule moved out of the bench-scoped
+  `.claude/rules/measurement.md` into `.claude/CLAUDE.md`, since it has now
+  fired outside `bench/`. Caught by adversarial review, before push, again.
 
 - **2026-07-29 — a two-variant difference was written up as an attribution.**
   B1 was first committed concluding that wasmtime's 6 ns went on "the three

@@ -24,8 +24,13 @@ already printed the first.
 - **Any external fact you are about to rely on is still true.** This project
   sits on a fast-moving spec surface. Design notes carry dates; **if you are
   about to act on a dated external claim more than ~3 months old — a Wasm
-  proposal's phase, a runtime's feature support, a tool's version — search the
-  web and confirm before building on it.** Correct it in place if it moved.
+  proposal's phase, a runtime's feature support, a tool's version — run
+  `/survey` before building on it.** Correct it in place if it moved.
+- **Entering a stage, survey what the stage stands on.** At minimum, run the
+  thing that would fail if the stage's premise were wrong — how much further to
+  go is yours to judge, and `/survey` says how to judge it. S0 was entered
+  without anyone asking whether the module could be a component at all, and the
+  answer changed the size of S4 (`doc/design/0007-*`).
 
 ## 2. Choose
 
@@ -95,9 +100,12 @@ session is the user saying so.
   does not have your local state.
 - **Do not add a rule because a sibling project has one.** Their rules encode
   their incidents. `doc/design/0006` explains why copying them is a net loss.
-- **Web search is not optional on spec facts.** Wasm proposal phases, engine
-  support matrices, and WASI versions all moved within the last year. A
-  confident wrong version number propagates into design decisions silently.
+- **Web search is not optional on spec facts, and is not sufficient either.**
+  Wasm proposal phases, engine support matrices, and WASI versions all moved
+  within the last year, and a confident wrong version number propagates into
+  design decisions silently. Negative claims ("X does not support Y") rot
+  fastest. `/survey` says how far to take it — the last move is always to build
+  the smallest thing that would fail if the claim were false.
 - **`.ref/` is a read-only lens.** Never copy code out of it; re-derive.
   Different projects, different constraints — that is the point of reading them.
 - **If you cannot say what would falsify a claim, you are not ready to write it

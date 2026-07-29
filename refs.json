@@ -3,13 +3,20 @@
     "Reference sources, cloned on demand into .ref/ (gitignored) by `bb ref`.",
     "Committed as a list rather than assumed to exist on anyone's disk: a fresh",
     "clone on any machine can reach the same material with one command.",
-    "Shallow by default — we read these, we never build them."
+    "Shallow by default — we read these, we never build them.",
+    "`large: true` means `bb ref` skips it unless you name it: these are whole",
+    "language SDKs and we want one subdirectory of each, not a fast `bb ref`."
   ],
   "refs": {
     "clojure":        { "url": "https://github.com/clojure/clojure",              "why": "the semantics we must match; clojure.lang is the dispatch reference" },
     "clojurescript":  { "url": "https://github.com/clojure/clojurescript",        "why": "the analyzer we plan to reuse, and a second dispatch strategy for the same semantics" },
     "ClojureWasm":    { "url": "https://github.com/clojurewasm/ClojureWasm",      "why": "sibling; read its doc/decisions and debt ledger for what went wrong" },
     "zwasm":          { "url": "https://github.com/clojurewasm/zwasm",            "why": "sibling; a Wasm engine written from scratch, including its JIT notes" },
-    "clj.wasm":       { "url": "https://github.com/kanaka/clj.wasm",              "why": "earlier exploration of this exact question" }
+    "clj.wasm":       { "url": "https://github.com/kanaka/clj.wasm",              "why": "earlier exploration of this exact question" },
+
+    "component-model": { "url": "https://github.com/WebAssembly/component-model", "why": "the Canonical ABI we must emit by hand (S4); issue #525 is GC-in-ABI, still a pre-proposal" },
+    "wit-bindgen":     { "url": "https://github.com/bytecodealliance/wit-bindgen", "why": "how every other language binds WIT — no Clojure backend, so this is the shape to match, not to use" },
+    "dart-sdk":        { "url": "https://github.com/dart-lang/sdk",                "large": true, "why": "dart2wasm: the closest prior art for lowering a GC'd object model onto WasmGC (pkg/dart2wasm)" },
+    "kotlin":          { "url": "https://github.com/JetBrains/kotlin",             "large": true, "why": "Kotlin/Wasm: the second WasmGC backend built from scratch rather than via LLVM" }
   }
 }

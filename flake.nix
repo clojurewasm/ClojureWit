@@ -12,6 +12,8 @@
           # Keep this list in sync with tools.json (bin/check-tools reads that
           # file, so a drift between the two shows up as a failing `bb check`).
           packages = with pkgs; [
+            git                  # `bb ref`. The macOS /usr/bin/git shim breaks once
+                                 # nix clears DEVELOPER_DIR, so it must come from here.
             temurin-bin-25       # JVM: Clojure host. 22+ for the FFM/wasmtime path.
             clojure
             babashka

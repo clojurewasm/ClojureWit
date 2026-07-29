@@ -20,11 +20,20 @@
 
   ref         {:doc  "Clone/refresh reference sources into .ref/ (see refs.json). `bb ref clojure` for one."
                :task (let [want (first *command-line-args*)
-                           refs (get (json/parse-string (slurp "refs.json")) "refs")
-                           refs (if want (select-keys refs [want]) refs)]
+                           all  (get (json/parse-string (slurp "refs.json")) "refs")
+                           ;; Whole language SDKs are opt-in by name: cloning them
+                           ;; by default would turn `bb ref` from seconds into
+                           ;; minutes, and they are read a subdirectory at a time.
+                           large? (fn [[_ v]] (get v "large"))
+                           refs (if want
+                                  (select-keys all [want])
+                                  (into {} (remove large? all)))]
                        (when (empty? refs)
-                         (println "unknown ref. known:" (str/join ", " (keys (get (json/parse-string (slurp "refs.json")) "refs"))))
+                         (println "unknown ref. known:" (str/join ", " (keys all)))
                          (System/exit 1))
+                       (when-not want
+                         (when-let [skipped (seq (keep (fn [[k v]] (when (get v "large") k)) all))]
+                           (println (str "skipping (large, name it to clone): " (str/join ", " skipped)))))
                        (fs/create-dirs ".ref")
                        (doseq [[name {:strs [url why]}] refs
                                :let [dir (str ".ref/" name)]]
