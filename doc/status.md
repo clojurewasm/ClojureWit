@@ -40,14 +40,16 @@ gained the component model between v40 and v43 — 0 exported
 JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
 minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
-1. **Decide whether a couple of microseconds per call is acceptable for what
-   `cljwit.host` is for.** The
-   only part this project can remove by its own choices is the ~20% the
-   Component Model adds; the rest is outside the C API, and the lever there is
-   the Rust API's typed calls behind a shim.
-2. **Design `cljwit.host`'s API**, now that the calling convention is decided
-   (interface proxies, pure Clojure) and the cost structure is known
-   (per-call-dominated, not per-byte).
+1. **Find the mechanism behind `0013`'s 21×.** A component call costs ~2.07 µs
+   from Clojure and the same C entry point costs 75 ns from C. Seven
+   hypotheses are eliminated; what survives is executing wasmtime's JIT'd code
+   on a JVM thread, with macOS arm64's per-thread W^X as the leading untested
+   mechanism. **Running S0 and `bb spike-c-cost`/`bb spike-cost` on x86_64
+   Linux discriminates it and settles S0's untried axis at the same time.**
+2. **Design `cljwit.host`'s API.** The calling convention is decided (interface
+   proxies, pure Clojure). Do not shape the API around a microsecond floor:
+   `0013` shows there is no such floor, and an API shaped around a cost is hard
+   to unshape once the cost goes away.
 3. **`0012` is closed for every row whose WIT type we can write today.** The
    echo test (`test/cljwit/roundtrip_test.clj`, 87 assertions, in `bb check`)
    covers the scalars, `string`, `enum`, `option`, nested `option`, `result`,

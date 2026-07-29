@@ -1,0 +1,9 @@
+# Not built by `bb check`, and rustc is deliberately not in flake.nix — see
+# doc/design/0013. This corroborates the C control; it does not carry it.
+[package]
+name = "rust_call_cost"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+wasmtime = "=47.0.1"   # must match tools.json, or the comparison means nothing

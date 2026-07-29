@@ -97,6 +97,25 @@
                              (run "clojure" "-J--enable-native-access=ALL-UNNAMED"
                                   "-M:dev" "-m" "cljwit.spike.component-call"))))}
 
+  spike-ffm-shape {:doc "Is an FFM downcall expensive because of its shape? See 0013."
+                   :task (do (babashka.fs/create-dirs "target")
+                             (let [so (str "target/libnoop7"
+                                           (if (= "Mac OS X" (System/getProperty "os.name")) ".dylib" ".so"))]
+                               (run "cc" "-O2" "-shared" "-fPIC" "-o" so "dev/spike/noop7.c")
+                               (run "clojure" "-M:dev" "-m" "cljwit.spike.ffm-shape")))}
+
+  spike-c-cost {:doc "The C control for spike-cost: same C API, caller is C not the JVM."
+                :task (if-not (System/getenv "CLJWIT_WASMTIME_INCLUDE")
+                        (do (println "CLJWIT_WASMTIME_INCLUDE is unset — run inside `nix develop`")
+                            (System/exit 1))
+                        (let [lib (System/getenv "CLJWIT_WASMTIME_LIB")
+                              bin "target/spike-c-cost"]
+                          (babashka.fs/create-dirs "target")
+                          (run "cc" "-O2" "-o" bin "dev/spike/call_cost.c"
+                               (str "-I" (System/getenv "CLJWIT_WASMTIME_INCLUDE"))
+                               (str "-L" (babashka.fs/parent lib)) "-lwasmtime")
+                          (apply run bin *command-line-args*)))}
+
   spike-cost  {:doc  "S1 spike: what one call costs. One JVM per path. Needs `nix develop`."
                :task (if-not (System/getenv "CLJWIT_WASMTIME_LIB")
                        (do (println "CLJWIT_WASMTIME_LIB is unset — run inside `nix develop`")

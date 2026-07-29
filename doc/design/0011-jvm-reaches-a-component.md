@@ -2,6 +2,16 @@
 
 **Status:** accepted · 2026-07-30
 
+> **Amended 2026-07-30 by `0013`, which falsified this note's central
+> attribution.** Everything below about *reaching* a component stands. The cost
+> accounting does not: "what is expensive is one call into wasmtime, at
+> ~1.57 µs" is **wrong**. wasmtime's floor is ~15 ns and the same C entry point
+> costs 75 ns from C, so ~96% of the figure is on the JVM side — not wasmtime's,
+> and not a floor. This note's error was structural, not arithmetic: **every
+> number in it was taken through the JVM, so no comparison could have shown
+> which side the cost was on.** The unchecked path's unexplained 2.4× slowdown
+> is likewise a driving error here, not a property of wasmtime — see `0013`.
+
 ## The question
 
 `0001` makes `cljwit.host` the first deliverable and `0005` assumes it reaches

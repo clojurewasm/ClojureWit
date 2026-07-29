@@ -25,6 +25,7 @@
 
             wasmtime             # server runtime; component model + WASI 0.3
             wasmtime.lib         # libwasmtime, for the JVM/FFM host path (S1)
+            wasmtime.dev         # wasmtime.h, for the C control in dev/spike
             wasm-tools           # wat<->wasm, validate, component new
             binaryen             # wasm-opt: the Wasm->Wasm optimizer
             nodejs               # V8 lane: WasmGC + speculative inlining
@@ -36,6 +37,9 @@
             # *shipped* cljwit.host finds the library is still open — see
             # doc/design/0005.
             export CLJWIT_WASMTIME_LIB="${pkgs.wasmtime.lib}/lib/libwasmtime${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"
+            # The C control that dev/spike/call_cost.c is needs the headers from
+            # the *pinned* wasmtime, not whatever a bare nixpkgs resolves to.
+            export CLJWIT_WASMTIME_INCLUDE="${pkgs.wasmtime.dev}/include"
             echo "ClojureWit dev shell — 'bb tasks' to see what you can run"
           '';
         };
