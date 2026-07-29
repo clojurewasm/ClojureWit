@@ -48,7 +48,10 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 2. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).
-3. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+3. **Read `.ref/wit-bindgen`.** Four language backends have already answered
+   the questions `0012` is deciding — how to map `result`, `char`, and nested
+   `option` — and neither the note nor its review read them. `refs.json` calls
+   it "the shape to match". wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.
@@ -78,8 +81,8 @@ them wide. `array.copy` does the same bytes GC-to-GC in 51 ns, so an
 array↔memory instruction would be worth a further 6.6×.
 
 Generic dispatch fails the server lane by 6×; guarded specialisation erases it,
-and starts paying at 26.6% hit rate on wasmtime (nine measured points) against
-roughly 80% on V8 (bounded only to 70–90%). Boxed arithmetic wins
+and starts paying at 26.6% hit rate on wasmtime against 80% on V8, each now
+bracketed by adjacent measured points. Boxed arithmetic wins
 outright on both. `ref.cast` is free by depth and expensive by width. `0004` and
 `0003` both carry amendments for claims these runs falsified.
 

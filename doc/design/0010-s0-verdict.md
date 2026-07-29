@@ -27,8 +27,7 @@ all the budget needs.
 
 **The condition is per-site guard precision.** A guard that mostly misses is
 worse than no guard: specialising starts paying at **26.6% hit rate on
-wasmtime** (nine measured points) and **roughly 80% on V8** (bounded only to
-70–90%; see "what would falsify this"). Below the
+wasmtime** and **80% on V8**, each bracketed by adjacent measured points. Below the
 threshold, specialising loses on that lane.
 
 **Coverage is a different quantity and is unmeasured.** B7 measured *hit rate*
@@ -129,7 +128,9 @@ the bounds belong here rather than only in `0002`'s threats.
   at nine points and lands at 26.6%** — the generic control's ~20% hump turned
   out to be real (indirect-branch prediction, absent on V8, which is what
   confirms the mechanism), so a flat-control reading of ~41% is ruled out.
-  **V8's ~80% remains soft**: it interpolates onto a −0.01 ns endpoint inside
-  its own spread, so the data bounds it only to roughly 70–90%.
+  **V8's is now bracketed at 80.1%** by points at k = 7, 8 and 10, which closed
+  the gap from three of eleven to one. It is 80% give or take a few points
+  rather than 70–90%, because the bracketing deltas are small against V8's own
+  spread.
 - **Any of the six failing to reproduce on x86_64 Linux**, which nothing has
   tried.

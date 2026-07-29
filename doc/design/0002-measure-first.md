@@ -268,9 +268,16 @@ With those points the wasmtime curve is:
 prove it: a one-type ring sends every `call_ref` to the same target and is
 predicted; a two-type ring alternates and mispredicts. **V8 shows no hump**
 (0.856–0.936 across all nine rings) because it speculatively inlines, so
-predictability of the indirect branch never dominates there. The V8 crossover
-is unchanged at ~80% and still rests on a −0.01 ns endpoint inside its spread,
-so that figure remains the soft one.
+predictability of the indirect branch never dominates there. **V8's crossover is now bracketed too.** Points at k = 7, 8 and 10 close the
+gap from three of eleven to one: the delta goes +0.186, +0.098, +0.042, then
+−0.010 at k=9, putting the crossing at **80.1%**. So ~80% stands and is no
+longer resting on a single endpoint inside the spread — though the bracketing
+points (+0.042 and −0.010) are themselves small against V8's ~2% run-to-run
+spread on a 0.9 ns quantity, so it is 80% ±a few points rather than 80.1%.
+
+One oddity left unexplained: V8's guarded curve is **not monotonic at the end**
+— 0.618 ns at k=10 against 0.739 at k=11, where the ring is uniform. wasmtime
+shows nothing like it. Recorded, not chased.
 
 **An unexplained anomaly under the threshold, recorded rather than smoothed
 over:** B7's generic path on a *two-type* ring costs 10.12 ns at 3/11, while
