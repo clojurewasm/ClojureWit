@@ -113,7 +113,7 @@ and `.claude/skills/wat` asserted the opposite until it was measured.
 | ~~B2~~ | ~~the same site with 10 receiver types~~ | **done** — mechanism confirmed, V8 0.61× JVM, wasmtime 2.84× |
 | ~~B5~~ | ~~guarded call-site specialisation~~ | **done** — both lanes pass, on a coverage condition |
 | ~~B7~~ | ~~the specialisation crossover~~ | **done** — ~26% wasmtime, ~80% V8; no single threshold fits both |
-| B3 | `i31` inline arithmetic | whether boxed math can be cheap |
+| ~~B3~~ | ~~`i31` inline arithmetic~~ | **done** — 0.31× JVM on both lanes; unboxed we lose 2.1× |
 | ~~B4~~ | ~~`ref.cast` cost vs type-hierarchy depth~~ | **done** — depth is free; *width* and input variety are what cost |
 
 **B2 confirmed `0004`'s mechanism and not its conclusion.** Megamorphism costs
@@ -132,7 +132,13 @@ both halves; the rule is **cast to leaves, keep the type set at a cast site
 small**, which is the same lever as call-site specialisation seen from the other
 side.
 
-**Next: B3**, the last contracted S0 benchmark. Then, outside the contract:
+**S0's four contracted benchmarks are all measured**, plus B5 and B7 which the
+findings added. B3 confirmed the roadmap's stated profile on both halves at
+once: boxed arithmetic costs us 0.31× what it costs JVM Clojure, unboxed costs
+us 2.1× — and it is the first benchmark wasmtime wins outright, because there is
+no indirect call for its missing adaptive tier to matter to.
+
+**Next, outside the original contract:**
 
 - **B6 — the component boundary crossing.** A GC-to-linear-memory copy per
   aggregate argument, unmeasured, and it is what "a Rust developer calls a

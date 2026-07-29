@@ -36,7 +36,7 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 |---|---|---|---|
 | B1 | protocol dispatch, monomorphic | **within 2× of JVM** — JVM's cached path is 1 compare + interface call; ours is 3 loads + `call_ref` | **half right.** V8 **0.58×** (faster than JVM); wasmtime **5.61×**. The prediction holds on V8 and fails on wasmtime. The reasoning is wrong on both: the cost is neither the `call_ref` nor the three loads, but the first of them. |
 | B2 | protocol dispatch, 10 receiver types at one site | **faster than JVM** — the JVM's per-call-site cache thrashes; a vtable slot has no cache to thrash | **half right, and the mechanism is right.** V8 **0.61×** — faster than JVM, prediction holds; wasmtime **2.84×** — slower, prediction fails. But megamorphism costs wasmtime **+9%** against the JVM's **+114%**, so "no cache to thrash" is confirmed. V8 degrades **+122%**, because it *does* speculate and loses it. |
-| B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | _pending_ |
+| B3 | `i31` inline arithmetic vs JVM boxed `(+ a b)` | **faster than JVM** — JVM does a double dispatch through `Numbers.ops`; ours is two `ref.test`s and an add | **confirmed, on both lanes, by 3.2×.** JVM 2.982; V8 0.927 and wasmtime 0.912, both **0.31×**. The first benchmark wasmtime wins. The overflow check is free (0.912 against 0.917 without it). |
 | B4 | `ref.cast` at hierarchy depth 2 vs 6 | **depth matters measurably** — enough to justify a flat type graph | **falsified.** Depths 2, 3, 4 and 5 cost 3.669, 3.667, 3.672 and 3.698 ns on wasmtime — flat to within 1%. Depth is free; the prediction named the wrong axis, and so did the design guidance it supported. |
 | B4b | the axis B2 questioned: `ref.cast` cost vs *variety of input types*, depth held fixed | **recorded 2026-07-29, before the run, and it contradicts B4's own prediction above.** Both engines implement a cast as a constant-time supertype-array probe, so **neither depth nor variety should matter measurably**, and B4's original prediction is wrong. The 6.81-vs-2.33 gap in B2 that raised the question was confounded — it varied the ring *and* the callee — and I expect it to be the mixed ring's dispatch, not the cast. Falsified if either axis moves the number more than the run-to-run spread. | **half right.** Depth: flat, as predicted. Variety: **+2.14 ns on wasmtime** (3.718 → 5.860), so B2's lead was real and this prediction is falsified on that axis. On V8 neither moves anything (0.843 → 0.844). |
 | B5 | guarded call-site specialisation, on wasmtime | **recorded 2026-07-29, before the run.** B1 says the whole server-lane cost is the load-to-indirect-branch recurrence, and a guard removes it on the hit path. So: **at 100% hit, within 1 ns of the direct-call control (2.33)** — passing the stop condition. **At a low hit rate, worse than generic dispatch**, because the guard is paid and the vtable path taken anyway. **On V8, no material change**, since it already speculates the same shape. | **1 and 2 confirmed, 3 wrong.** At 100% hit wasmtime is **2.390** against a 2.331 floor — 0.06 ns, far better than the 1 ns predicted. At 2/11 hit it is **12.37**, worse than generic dispatch's 9.22. On V8 there *is* a change: guarded is 0.733 against generic's 0.894, landing on the floor. |
@@ -294,6 +294,35 @@ and B5 are the same lever seen twice. A specialised site casts to a known leaf
 type and pays 0.09 ns; a generic one casts to a broad supertype over many
 inputs and pays up to 4.94.
 
+## B3 — measured 2026-07-29. The predicted profile, both halves of it.
+
+Accumulate by one, n times, as a dependency chain. The i31 path is inline —
+two `br_on_cast_fail`, two `i31.get_s`, an `i32.add` and a real overflow check
+— with a reachable slow path, because a fast path measured without its fallback
+is a different program.
+
+ns per add:
+
+| | JVM Clojure | V8 | wasmtime |
+|---|---|---|---|
+| **boxed / `i31`** | 2.982 | **0.927** (0.31×) | **0.912** (0.31×) |
+| `i31`, overflow check removed | — | 0.898 | 0.917 |
+| **unboxed floor** | **0.109** | 0.229 (2.10×) | 0.242 (2.22×) |
+
+**1. The prediction is confirmed, and this is the first benchmark wasmtime
+wins.** Boxed arithmetic costs both lanes 0.31× what it costs JVM Clojure —
+`Numbers.add(Object, Object)`'s double dispatch against two casts and an add.
+Notably wasmtime matches V8 here: there is no indirect call, so the
+load-to-indirect-branch recurrence that dominates B1 never arises.
+
+**2. The overflow check is free.** 0.912 with it, 0.917 without, on wasmtime —
+inside the spread. It does not need to be an opt-out.
+
+**3. `doc/roadmap.md`'s stated profile is confirmed on both halves at once** —
+"better on dispatch-heavy and boxed-arithmetic code, worse where the JVM can use
+primitives". Boxed: we win 3.2×. Unboxed: we lose 2.1×. One benchmark, both
+directions, which is a better test of that claim than either half alone.
+
 **Threats to validity, recorded so the number is not over-read.**
 
 - The benchmark is a **dependency chain** — each dispatch's result is the next
@@ -324,6 +353,14 @@ inputs and pays up to 4.94.
 - **B5's guard tests one type.** A real specialised site with several candidates
   needs several guards or a switch, and nothing here says what the second and
   third cost. The 0.06 ns result is the best case by construction.
+- **B3's unboxed floor is the weakest number in the set.** JVM Clojure's is
+  0.109 ns — about 0.4 cycles per iteration — which is fast enough that C2 has
+  probably strength-reduced or vectorised a loop whose result is a linear
+  function of the trip count. Ours may be partly reduced too. So "2.1× slower
+  unboxed" is a statement about what two optimizers did to an easy loop, not
+  about arithmetic. The boxed row is not affected: boxing blocks that
+  rewriting, which is why it is the headline. Settling it needs an accumulator
+  the optimizer cannot fold — data-dependent, not a constant stride.
 - **B4's "leaf type" reading is inferred.** What is measured is that a cast to
   `$v0` (which nothing extends) is 30× cheaper than a cast to `$d5` (which ten
   types extend). Whether Cranelift keys that on the target being a leaf, on it

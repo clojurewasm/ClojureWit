@@ -149,7 +149,23 @@
    {:id "B4v10"
     :what "ref.cast to depth 5, ten input types — the axis B2 questioned"
     :wat "bench/s0/b4_cast.wat" :export "cast_variety_10"
-    :expect #(mod % 11)}])
+    :expect #(mod % 11)}
+   ;; B3 — boxed arithmetic. The answer is n itself (add 1, n times), which is
+   ;; never what an empty loop returns, so check-n! is satisfied for every n.
+   {:id "B3"
+    :what "i31 fast-path add, with the overflow check and a reachable slow path"
+    :wat "bench/s0/b3_arith.wat" :export "bench"
+    :jvm "s0.jvm.b3" :variant "boxed"
+    :expect identity}
+   {:id "B3n"
+    :what "control: the same i31 round-trip without the overflow check"
+    :wat "bench/s0/b3_arith.wat" :export "bench_nocheck"
+    :expect identity}
+   {:id "B3u"
+    :what "floor: the same loop unboxed — a raw i32 add"
+    :wat "bench/s0/b3_arith.wat" :export "bench_unboxed"
+    :jvm "s0.jvm.b3" :variant "unboxed"
+    :expect identity}])
 
 ;; --- shelling out ----------------------------------------------------------
 

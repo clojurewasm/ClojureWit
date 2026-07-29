@@ -29,6 +29,10 @@ This project is pre-alpha; nothing is stable and there are no releases yet.
   gained the reference sources it needs.
 - **`doc/design/0007`** — the component boundary is linear memory, not GC.
   Found by the first survey; sizes S4 and adds an open question to the roadmap.
+- **S0 B3** — boxed arithmetic on the `i31` fast path: 0.31× JVM Clojure on
+  both lanes, the first benchmark wasmtime wins. Unboxed we lose 2.1×, which is
+  the profile `doc/roadmap.md` predicted, confirmed in both directions at once.
+  With this the four contracted S0 benchmarks are all measured.
 - **S0 B4** — what a `ref.cast` costs, on two axes. Depth is free; casting to a
   type that has subtypes is 30× a cast to a leaf, and input variety adds more.
   Falsifies `0004`'s "shallow and wide" guidance, which was backwards.
