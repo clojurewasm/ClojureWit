@@ -169,20 +169,25 @@ shape, and handles minted per call. `resource_host_to_any` is how one becomes
 a val — and it panics outside a call scope, which is the landmine already
 recorded above.
 
-**Tried, 2026-07-30, and it does not work yet.**
-`dev/cljwit/spike/host_resource.clj` drives
-`dev/resources/hres.{wit,wat}` — a guest that mints a host resource, reads it
-through a `borrow`, and drops it. Every individual piece succeeds:
-`add_resource`, both `add_func`s and `instantiate`; `mint` with
-`host_to_any` returning no error; `peek` with `any_to_host` returning the right
-rep; and the destructor upcall firing with that rep. **The crash is inside
-`wasmtime_component_func_call` itself, after the destructor and before it
-returns**, in `error::source`.
+**It works** (`bb spike-hres`): a guest mints a host resource, reads it through
+a `borrow`, and drops it, and the host's destructor fires with the right rep.
 
-Leading suspect: ownership of the `any` that `host_to_any` produces. The spike
-writes it into the result val *and* deletes the `host_t` it came from, and
-nothing has established which of those wasmtime expects. The spike is not a
-`bb` task, because a task that aborts the JVM is worse than none.
+The one thing that is not guessable, and that cost a JVM crash to find: **the
+destructor returns `wasmtime_error_t *`, not `void`** —
+
+```c
+typedef wasmtime_error_t *(*wasmtime_component_resource_destructor_t)(
+    void *, wasmtime_context_t *, uint32_t);
+```
+
+Declaring it `void` in the FFM upcall makes wasmtime read a garbage register as
+an error pointer and crash walking its source chain, **after** the destructor
+has already run correctly — so every printed probe says the callback works. A
+null destructor is not allowed either; wasmtime calls it.
+
+`definterface` also needs the return type spelled: a `^void` method against a
+`Void/TYPE` `MethodType` fails `findVirtual` outright, which is the *friendly*
+version of the same mistake.
 
 ## Alternatives rejected
 

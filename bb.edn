@@ -127,6 +127,16 @@
                                (run "cc" "-O2" "-shared" "-fPIC" "-o" so "dev/spike/noop7.c")
                                (run "clojure" "-M:dev" "-m" "cljwit.spike.ffm-shape")))}
 
+  spike-hres {:doc "Can the host define a resource the guest imports? See 0017 F."
+              :task (do (babashka.fs/create-dirs "target")
+                        (run "wasm-tools" "parse" "dev/resources/hres.wat" "-o" "target/hres.core.wasm")
+                        (run "wasm-tools" "component" "embed" "dev/resources/hres.wit"
+                             "target/hres.core.wasm" "-o" "target/hres.embed.wasm")
+                        (run "wasm-tools" "component" "new" "target/hres.embed.wasm"
+                             "-o" "target/hres.component.wasm")
+                        (run "clojure" "-M:dev" "-m" "cljwit.spike.host-resource"
+                             "target/hres.component.wasm"))}
+
   spike-import {:doc "Can a Wasm guest call back into Clojure? See 0014's falsifier."
                 :task (do (babashka.fs/create-dirs "target")
                           (run "wasm-tools" "parse" "dev/resources/imp.wat" "-o" "target/imp.core.wasm")

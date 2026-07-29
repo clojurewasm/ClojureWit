@@ -6,27 +6,15 @@
    `iface#func` cannot express a resource, and minting one needs a second
    upcall shape — a destructor `void (*)(void *, wasmtime_context_t *, u32)`.
 
-   **This does not work yet, and is committed for how far it gets.** Run it
-   with
+   The premise check, not the feature:
 
-       clojure -M:dev -m cljwit.spike.host-resource target/hres.component.wasm
+       bb spike-hres
 
-   and the JVM crashes inside libwasmtime's `error::source`. It is deliberately
-   *not* a `bb` task, because a task that aborts the JVM is worse than none.
-
-   What is narrowed, by printing from inside each upcall:
-
-     * `add_resource`, both `add_func`s and `instantiate` all succeed.
-     * `mint` runs; `host_to_any` returns no error.
-     * `peek` runs; `any_to_host` returns no error and the rep comes back.
-     * the destructor upcall runs, with the right rep.
-     * the crash is *inside* `wasmtime_component_func_call`, after the
-       destructor and before it returns.
-
-   So every piece works and the composition does not. The leading suspect is
-   ownership of the `any` that `host_to_any` produces: this code writes it into
-   the result val and also deletes the `host_t` it came from, and nothing here
-   has established which of those wasmtime expects."
+   The one thing that is not guessable: **the destructor returns
+   `wasmtime_error_t *`, not `void`.** Declaring it void makes wasmtime read a
+   garbage register as an error pointer and crash walking its source chain,
+   after the destructor has already run correctly. A null destructor is not
+   allowed either -- wasmtime calls it."
   (:require [clojure.java.io :as io])
   (:import [java.lang.foreign Arena Linker SymbolLookup MemorySegment
             FunctionDescriptor ValueLayout]
@@ -52,8 +40,11 @@
          ^java.lang.foreign.MemorySegment res ^long nres]))
 
 (definterface Dtor
-  (^void call [^java.lang.foreign.MemorySegment data ^java.lang.foreign.MemorySegment ctx
-               ^int rep]))
+  ;; Returns wasmtime_error_t*, not void. Declaring it void makes wasmtime read
+  ;; a garbage register as an error pointer and crash walking it.
+  (^java.lang.foreign.MemorySegment
+   call [^java.lang.foreign.MemorySegment data ^java.lang.foreign.MemorySegment ctx
+         ^int rep]))
 
 (defn -main [& _args]
   (let [linker (Linker/nativeLinker)
@@ -143,7 +134,7 @@
                    (call [_ _d _cx rep]
                      (swap! dropped conj [rep (get @table rep)])
                      (swap! table dissoc rep)
-                     nil))
+                     MemorySegment/NULL))
 
             bs (.readAllBytes (io/input-stream (or (first *command-line-args*)
                                                    "target/hres.component.wasm")))
@@ -165,9 +156,9 @@
                    (call (fx "wasmtime_component_linker_instance_add_resource" ADDR ADDR ADDR I64 ADDR ADDR ADDR ADDR)
                          li (cstr "token") (long 5) rty
                          (upcall dtor Dtor
-                                 (MethodType/methodType Void/TYPE ^"[Ljava.lang.Class;"
+                                 (MethodType/methodType MemorySegment ^"[Ljava.lang.Class;"
                                                         (into-array Class [MemorySegment MemorySegment Integer/TYPE]))
-                                 (FunctionDescriptor/ofVoid (into-array java.lang.foreign.MemoryLayout [ADDR ADDR I32])))
+                                 (FunctionDescriptor/of ADDR (into-array java.lang.foreign.MemoryLayout [ADDR ADDR I32])))
                          MemorySegment/NULL MemorySegment/NULL))
             addf (fx "wasmtime_component_linker_instance_add_func" ADDR ADDR ADDR I64 ADDR ADDR ADDR)
             _ (ok! "add mint" (call addf li (cstr "mint") (long 4)
