@@ -48,15 +48,17 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 2. **Design `cljwit.host`'s API**, now that the calling convention is decided
    (interface proxies, pure Clojure) and the cost structure is known
    (per-call-dominated, not per-byte).
-3. **Land the scalar half of `0012`'s echo test.** The mapping is written
-   (`0012`, `proposed`) and its falsifier is an echo component. That does *not*
-   need a hand-written canonical ABI — `wasm-tools component new` is already
-   pinned and `wit-bindgen` generates the guest — so `bool`, the integers,
-   `string`, `enum` and `record` can be asserted now, and the note stops being
-   a table someone wrote down. wasmtime's is now
-   nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
-   inside its own spread, so the data bounds it only to 70–90%. Points at
-   k = 7, 8, 10 would settle it.
+3. **`0012` is closed for every row whose WIT type we can write today.** The
+   echo test (`test/cljwit/roundtrip_test.clj`, 87 assertions, in `bb check`)
+   covers the scalars, `string`, `enum`, `option`, nested `option`, `result`,
+   `variant`, `list<u32>` and `record`. Every row corrected the note. What is
+   left needs `resource` (`own`/`borrow`) or an unshipped feature (`map`,
+   `list<T,N>`, `stream`/`future`), so it waits on a guest that can declare
+   one — not on more host marshalling.
+4. **Settle `0010`'s crossover on the V8 lane.** wasmtime's is nine measured
+   points at 26.6%; V8's interpolates onto a −0.01 ns endpoint inside its own
+   spread, so the data bounds it only to 70–90%. Points at k = 7, 8, 10 would
+   settle it.
 
 ## Where we are
 

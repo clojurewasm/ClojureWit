@@ -39,4 +39,10 @@ world echo {
   /// is none.
   variant shape { circle(f64), square(u32), point }
   export echo-shape: func(v: shape) -> shape;
+
+  /// The last two rows. Both are vectors on the host side — an array of vals,
+  /// or of name/val entries — rather than the single pointers the sum types use.
+  export echo-list-u32: func(v: list<u32>) -> list<u32>;
+  record pair { n: u32, label: string }
+  export echo-pair: func(v: pair) -> pair;
 }

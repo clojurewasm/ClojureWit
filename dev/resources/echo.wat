@@ -6,7 +6,7 @@
   ;; one means handing back the same (ptr, len) — no copy. What it does need is
   ;; the two things doc/design/0007 named: an exported memory and cabi_realloc.
   (memory (export "memory") 1)
-  (global $next (mut i32) (i32.const 64))
+  (global $next (mut i32) (i32.const 96))
   (func (export "cabi_realloc")
         (param $old i32) (param $old-sz i32) (param $align i32) (param $new-sz i32)
         (result i32)
@@ -61,6 +61,21 @@
     (i32.store (i32.const 48) (local.get $disc))
     (i64.store (i32.const 56) (local.get $p))
     (i32.const 48))
+
+  ;; A list arrives as (ptr, len) already in our memory, like a string.
+  ;; Return area: the eight bytes at 64.
+  (func (export "echo-list-u32") (param $ptr i32) (param $len i32) (result i32)
+    (i32.store (i32.const 64) (local.get $ptr))
+    (i32.store (i32.const 68) (local.get $len))
+    (i32.const 64))
+
+  ;; A record flattens to its fields; the return area holds them in canonical
+  ;; layout — u32 at 0, then the string's (ptr, len). Twelve bytes at 80.
+  (func (export "echo-pair") (param $n i32) (param $ptr i32) (param $len i32) (result i32)
+    (i32.store (i32.const 80) (local.get $n))
+    (i32.store (i32.const 84) (local.get $ptr))
+    (i32.store (i32.const 88) (local.get $len))
+    (i32.const 80))
 
   (func (export "echo-bool") (param $v i32) (result i32) (local.get $v))
   (func (export "echo-s32") (param $v i32) (result i32) (local.get $v))

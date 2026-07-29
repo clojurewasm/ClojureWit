@@ -1,6 +1,8 @@
 # 0012 — The WIT ⇄ Clojure type mapping
 
-**Status:** proposed — **unimplemented and untested**. Rewritten 2026-07-30
+**Status:** accepted for the rows the echo test covers; `proposed` for the
+rest (`tuple`, `flags`, `own`/`borrow`, `map`, `list<T,N>`, `stream`/`future`,
+`error-context`) — see "What would falsify this". Rewritten 2026-07-30
 after review found the first draft wrong in most of its hard cases; what it got
 wrong is recorded at the end rather than quietly fixed. · 2026-07-30
 
@@ -207,7 +209,31 @@ where the oracle exists.
 ## What would falsify this
 
 **An echo component — one export per type returning its argument — driven from
-Clojure.** It does not exist, which is why this note is `proposed`.
+Clojure.** It now exists: `test/cljwit/roundtrip_test.clj`, 87 assertions,
+part of `bb check`. The guest is `dev/resources/echo.wit` plus a hand-written
+`echo.wat`; no Rust toolchain is involved, and `cabi_realloc` cost 25 lines
+rather than the thousands the first draft feared.
+
+Every row it covers produced at least one correction to this note — `bool`'s
+one-byte union member, `u32` above 2^31−1, nested `option`, `f32` narrowing,
+the surrogate hole, `enum` and `variant` lifting as *names*. The rows it does
+not cover are still `proposed`, and the estimate that each would be expensive
+should be distrusted: over-estimating this test's cost happened three times.
+
+**What the whole set showed, which no single row did.** All four sum types
+carry a name or a discriminant plus an **optional payload pointer** — `enum` a
+`wasm_name_t`, `variant` a `{wasm_name_t; val *}`, `result` a `{bool; val *}`,
+`option` a bare pointer, NULL for `none`. The two vector types are both
+`{size_t; T *}`. So a keyword, a `[:tag payload]`, and a map keyed by field
+name are **the host representation read straight**, not a Clojure-side
+convenience — and because a payload carries its own kind tag, lifting never
+needs to know which case it is in.
+
+The one type that breaks the pattern is `record`: its element is
+`{wasm_name_t name; val val;}` with the val **inline**, 48 bytes, not behind a
+pointer. Every sum type indirects; the product type does not. That is the
+shape a compiler would have to emit, so it is worth knowing before S4 rather
+than after.
 
 The first draft priced that at "thousands of lines" of hand-written canonical
 ABI, citing `0007`. **That was wrong**: `0007` sizes writing an *engine's* ABI.

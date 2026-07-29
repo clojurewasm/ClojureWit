@@ -39,7 +39,18 @@
 (def ^:private VAL 32)
 (def ^:private UNION 8)
 (def ^:private KIND {:bool 0 :u32 6 :u64 8 :s32 5 :f32 9 :f64 10 :char 11
-                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18 :result 19 :variant 16})
+                     :string 12 :enum 17 :option-u32 18 :option-option-u32 18 :result 19 :variant 16
+                     :list-u32 13 :record-pair 14})
+
+;; Both vector types are {size_t size; T *data;} — 16 bytes at the union
+;; offset, measured, and the same shape as wasm_name_t. A record's element is
+;; {wasm_name_t name; val val;}, 48 bytes, so the val is *inline* rather than
+;; behind a pointer: unlike every sum type, a record does not indirect.
+(def ^:private VEC-SIZE 0)
+(def ^:private VEC-DATA 8)
+(def ^:private ENTRY 48)
+(def ^:private ENTRY-NAME 0)
+(def ^:private ENTRY-VAL 16)
 
 ;; wasmtime_component_valvariant_t is {wasm_name_t discriminant; val *val;} —
 ;; the name occupies the first sixteen bytes of the union, the payload pointer
@@ -237,6 +248,40 @@
                         (do (.set iv I8 (long 0) (byte (KIND :u32)))
                             (.set iv I32 (long UNION) (unchecked-int payload))))
                       iv))))
+          ;; A vector of vals laid end to end. The list itself is the only
+          ;; part that is a vector on the host side; each element is an
+          ;; ordinary val, tagged with its own kind.
+          :list-u32
+          (let [n   (count v)
+                buf ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))]
+            (dotimes [i n]
+              (let [e (.asSlice buf (long (* VAL i)) (long VAL))]
+                (.set e I8 (long 0) (byte (KIND :u32)))
+                (.set e I32 (long UNION) (unchecked-int (nth v i)))))
+            (.set args I64 (long (+ UNION VEC-SIZE)) (long n))
+            (.set args ADDR (long (+ UNION VEC-DATA)) buf))
+          ;; Fields go out in declaration order, each carrying its own name.
+          :record-pair
+          (let [fields [["n" (KIND :u32) (:n v)] ["label" (KIND :string) (:label v)]]
+                buf ^MemorySegment (.allocate arena (long (* ENTRY (count fields))))]
+            (dotimes [i (count fields)]
+              (let [[fname k fv] (nth fields i)
+                    e  (.asSlice buf (long (* ENTRY i)) (long ENTRY))
+                    nb (.getBytes ^String fname "UTF-8")
+                    ns ^MemorySegment (.allocate arena (long (alength nb)))]
+                (MemorySegment/copy ^bytes nb 0 ns I8 0 (alength nb))
+                (.set e I64 (long (+ ENTRY-NAME STR-SIZE)) (long (alength nb)))
+                (.set e ADDR (long (+ ENTRY-NAME STR-DATA)) ns)
+                (.set e I8 (long ENTRY-VAL) (byte k))
+                (if (= k (KIND :u32))
+                  (.set e I32 (long (+ ENTRY-VAL UNION)) (unchecked-int fv))
+                  (let [b   (.getBytes ^String fv "UTF-8")
+                        sb ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
+                    (MemorySegment/copy ^bytes b 0 sb I8 0 (alength b))
+                    (.set e I64 (long (+ ENTRY-VAL UNION STR-SIZE)) (long (alength b)))
+                    (.set e ADDR (long (+ ENTRY-VAL UNION STR-DATA)) sb)))))
+            (.set args I64 (long (+ UNION VEC-SIZE)) (long (count fields)))
+            (.set args ADDR (long (+ UNION VEC-DATA)) buf))
           :string (let [b   (.getBytes ^String v "UTF-8")
                         buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
@@ -299,6 +344,36 @@
                 [tag (if (= (KIND :f64) (.get pv I8 (long 0)))
                        (.get pv F64 (long UNION))
                        (bit-and (long (.get pv I32 (long UNION))) 0xFFFFFFFF))])))
+          :list-u32
+          (let [n (.get res I64 (long (+ UNION VEC-SIZE)))
+                p ^MemorySegment (.get res ADDR (long (+ UNION VEC-DATA)))
+                b (.reinterpret p (long (* VAL n)))]
+            (mapv (fn [i]
+                    (bit-and (long (.get b I32 (long (+ (* VAL i) UNION)))) 0xFFFFFFFF))
+                  (range n)))
+          ;; A record comes back as name/value pairs, so a Clojure map with
+          ;; keyword keys is the host shape read straight — the field order the
+          ;; ABI fixes is information the map does not need to carry.
+          :record-pair
+          (let [n (.get res I64 (long (+ UNION VEC-SIZE)))
+                p ^MemorySegment (.get res ADDR (long (+ UNION VEC-DATA)))
+                b (.reinterpret p (long (* ENTRY n)))]
+            (into {}
+                  (map (fn [i]
+                         (let [e   (.asSlice b (long (* ENTRY i)) (long ENTRY))
+                               nl  (.get e I64 (long (+ ENTRY-NAME STR-SIZE)))
+                               nd ^MemorySegment (.get e ADDR (long (+ ENTRY-NAME STR-DATA)))
+                               nb  (byte-array nl)
+                               _   (MemorySegment/copy (.reinterpret nd nl) I8 0 nb 0 (int nl))
+                               k   (keyword (String. nb "UTF-8"))]
+                           [k (if (= (KIND :string) (.get e I8 (long ENTRY-VAL)))
+                                (let [sl (.get e I64 (long (+ ENTRY-VAL UNION STR-SIZE)))
+                                      sd ^MemorySegment (.get e ADDR (long (+ ENTRY-VAL UNION STR-DATA)))
+                                      sb (byte-array sl)]
+                                  (MemorySegment/copy (.reinterpret sd sl) I8 0 sb 0 (int sl))
+                                  (String. sb "UTF-8"))
+                                (bit-and (long (.get e I32 (long (+ ENTRY-VAL UNION)))) 0xFFFFFFFF))])))
+                  (range n)))
           :string (let [n (.get res I64 (long (+ UNION STR-SIZE)))
                         p ^MemorySegment (.get res ADDR (long (+ UNION STR-DATA)))
                         b (byte-array n)]
@@ -493,3 +568,24 @@
         (is (thrown? clojure.lang.ExceptionInfo (echo "echo-char" :char 0xDFFF)))
         (is (thrown? clojure.lang.ExceptionInfo (echo "echo-char" :char 0x110000)))
         (is (not (unicode-scalar-value? -1)))))))
+
+(deftest lists-and-records-round-trip
+  (with-echo
+    (fn [echo]
+      (testing "list<u32> — a vector, and the empty list is not nil"
+        (doseq [v [[] [0] [1 2 3] [4294967295] (vec (range 100))]]
+          (is (= v (echo "echo-list-u32" :list-u32 v)) (str "list " (pr-str v))))
+        (is (vector? (echo "echo-list-u32" :list-u32 []))
+            "empty list lifts as [], which `some?` can tell from option's nil"))
+
+      (testing "record — a map keyed by field name, per 0012"
+        (doseq [v [{:n 0 :label ""} {:n 7 :label "hi"} {:n 4294967295 :label "日本語"}]]
+          (is (= v (echo "echo-pair" :record-pair v)) (str "pair " (pr-str v)))))
+
+      (testing "the record's field order is the ABI's, not the map's"
+        ;; A Clojure map has no order, so lowering has to supply the
+        ;; declaration order itself. This passes only because it does: the
+        ;; input is built with the fields the other way round.
+        (is (= {:n 5 :label "x"}
+               (echo "echo-pair" :record-pair (array-map :label "x" :n 5)))
+            "a map whose seq order is reversed still lowers correctly")))))
