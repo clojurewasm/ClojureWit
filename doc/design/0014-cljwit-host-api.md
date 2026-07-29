@@ -25,8 +25,8 @@ The component's own type is read at load time and marshallers are built from
 it. No WIT file at run time, no macro, no generated namespace.
 
 ```clojure
-(with-open [rt (host/engine)]                       ;; process-lifetime
-  (let [art (host/compile rt "echo.component.wasm")] ;; artifact-lifetime
+(with-open [rt (host/engine)]                        ;; process-lifetime
+  (with-open [art (host/compile rt "echo.wasm")]     ;; artifact-lifetime
     (with-open [c (host/instantiate art)]            ;; call-scope
       ((:echo-string c) "hello"))))                  ;; => "hello"
 ```
@@ -42,9 +42,14 @@ only when the name is a legal Clojure keyword that reads back equal to itself.
 
 ```clojure
 (:echo-string c)                          ;; alias exists — plain label
-(c "wasi:cli/run@0.2.0")                  ;; no alias — the version bar
-(c "[constructor]fields")                 ;; no alias — annotations bar
+(c "wasi:cli/run@0.2.0#run")              ;; no alias — the version bars it
+(c "[constructor]fields")                 ;; no alias — annotations bar it
 ```
+
+**Exports are flat, not nested.** A function inside an interface is keyed
+`"pkg:name/iface@ver#func"` — the spelling WIT and `wasm-tools` already use,
+and the same string the core module exports it under. An earlier draft nested
+interfaces under a keyword namespace; that died with the keyword identity.
 
 The handle is callable as a function of one name, so both forms are one lookup.
 Lookup of an absent name **throws**, naming the nearest legal export.

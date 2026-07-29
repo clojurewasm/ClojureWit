@@ -37,6 +37,7 @@
 (def ^:private ITEM 24)       ; wasmtime_component_item_t, kind at 0, union at 8
 (def ^:private ITEM-OF 8)
 (def ^:private ITEM-FUNC 3)   ; WASMTIME_COMPONENT_ITEM_COMPONENT_FUNC
+(def ^:private ITEM-IFACE 1)  ; ...COMPONENT_INSTANCE — a WIT interface
 (def ^:private VT-OF 8)       ; ...its union: one pointer to the specific type
 (def ^:private RES-OK 8)      ; wasmtime_component_valresult_t {bool; val *}
 (def ^:private RES-VAL 16)
@@ -107,6 +108,8 @@
      :export-count  (b "wasmtime_component_type_export_count" I64 ADDR ADDR)
      :export-nth    (b "wasmtime_component_type_export_nth" BOOL ADDR ADDR I64 ADDR ADDR ADDR)
      :item-delete   (b "wasmtime_component_item_delete" nil ADDR)
+     :iface-count   (b "wasmtime_component_instance_type_export_count" I64 ADDR ADDR)
+     :iface-nth     (b "wasmtime_component_instance_type_export_nth" BOOL ADDR ADDR I64 ADDR ADDR ADDR)
      :ft-params     (b "wasmtime_component_func_type_param_count" I64 ADDR)
      :ft-param-nth  (b "wasmtime_component_func_type_param_nth" BOOL ADDR I64 ADDR ADDR ADDR)
      :ft-result     (b "wasmtime_component_func_type_result" BOOL ADDR ADDR)
@@ -576,41 +579,78 @@
         _     (ok! "linker_instantiate"
                    (invoke (:instantiate api) clink ctx (.-ptr art) inst))
         ct    (invoke (:comp-type api) (.-ptr art))
-        cnt   (invoke (:export-count api) ct (.-ptr e))
-        pp    ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)
-        lp    ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout I64)
-        item  ^MemorySegment (.allocate arena (long ITEM))
         closed  (AtomicBoolean. false)
         in-call (AtomicBoolean. false)
-        sigs  (into {}
-                    (keep (fn [i]
-                            (when (invoke (:export-nth api) ct (.-ptr e) (long i) pp lp item)
-                              (let [nm (read-name pp lp)]
-                                (when (= ITEM-FUNC (bit-and (long (.get item I8 (long 0))) 0xFF))
-                                  (let [ft (.get item ADDR (long ITEM-OF))]
-                                    [nm (reflect-func api arena ft)]))))))
-                    (range cnt))
+        item-kind (fn [^MemorySegment it] (bit-and (long (.get it I8 (long 0))) 0xFF))
+        ;; Every export, flattened. A function inside an interface is keyed the
+        ;; way WIT spells it — "pkg:name/iface@ver#func" — and remembers the
+        ;; path it needs to resolve its export index (0014 B).
+        ;; Fresh out-parameters per level: a recursive walk that shares them
+        ;; has the inner call overwrite the outer's name mid-iteration, which
+        ;; is a JVM crash rather than a wrong answer.
+        walk  (fn walk [ty nth-f count-f prefix]
+                ;; Fresh out-parameters per level: a recursive walk that shares
+                ;; them has the inner call overwrite the outer's name
+                ;; mid-iteration, which is a JVM crash, not a wrong answer.
+                ;; And `cat` here, not only at the top — a recursive producer
+                ;; has to flatten its own layer.
+                (let [[pp lp] (name-pair arena)
+                      item ^MemorySegment (.allocate arena (long ITEM))
+                      one  (fn [i]
+                             (when (invoke nth-f ty (.-ptr e) (long i) pp lp item)
+                               (let [nm (read-name pp lp)
+                                     k  (item-kind item)
+                                     of (.get item ADDR (long ITEM-OF))]
+                                 (cond
+                                   (= ITEM-FUNC k)
+                                   [{:key  (if prefix (str prefix "#" nm) nm)
+                                     :path (if prefix [prefix nm] [nm])
+                                     :sig  (reflect-func api arena of)}]
+
+                                   ;; One level: WIT does not nest interfaces.
+                                   (and (= ITEM-IFACE k) (nil? prefix))
+                                   (walk of (:iface-nth api) (:iface-count api) nm)))))]
+                  (into [] (comp (keep one) cat)
+                        (range (invoke count-f ty (.-ptr e))))))
+        found (walk ct (:export-nth api) (:export-count api) nil)
+        sigs  (into {} (map (fn [x] [(:key x) (:sig x)])) found)
+        index-of (fn [path]
+                   (when (empty? path)
+                     (throw (ex-info "an export with no path" {:cljwit/error :internal})))
+                   (reduce (fn [parent seg]
+                             (let [ix ^MemorySegment
+                                   (invoke (:export-index api) inst ctx parent
+                                           (cstr arena seg)
+                                           (long (count (.getBytes ^String seg "UTF-8"))))]
+                               ;; A null index passed to get_func is a segfault,
+                               ;; not an error return.
+                               (when (.equals MemorySegment/NULL ix)
+                                 (throw (ex-info (str "no export index for " (pr-str seg)
+                                                      " in " (pr-str path))
+                                                 {:cljwit/error :no-such-export
+                                                  :cljwit/path path})))
+                               ix))
+                           MemorySegment/NULL
+                           path))
         fns   (into {}
-                    (map (fn [[nm sig]]
+                    (map (fn [{:keys [key path sig]}]
                            (let [bad (distinct (mapcat unsupported
                                                        (cons (:result sig)
                                                              (map second (:params sig)))))]
-                             [nm (if (seq bad)
-                                   (fn [& _]
-                                     (throw (ex-info
-                                             (str nm " uses a type cljwit.host cannot marshal yet")
-                                             {:cljwit/error :unsupported-type
-                                              :cljwit/export nm
-                                              :cljwit/kinds (vec bad)})))
-                                   (let [eidx (invoke (:export-index api) inst ctx
-                                                      MemorySegment/NULL
-                                                      (cstr arena nm) (long (count (.getBytes ^String nm "UTF-8"))))
-                                         f ^MemorySegment (.allocate arena (long FUNC))]
-                                     (when-not (invoke (:get-func api) inst ctx eidx f)
-                                       (throw (ex-info (str "export " nm " vanished between type and instance")
-                                                       {:cljwit/error :wasmtime})))
-                                     (export-fn api arena ctx f sig closed in-call nm)))])))
-                    sigs)]
+                             [key (if (seq bad)
+                                    (fn [& _]
+                                      (throw (ex-info
+                                              (str key " uses a type cljwit.host cannot marshal yet")
+                                              {:cljwit/error :unsupported-type
+                                               :cljwit/export key
+                                               :cljwit/kinds (vec bad)})))
+                                    (let [eidx (index-of path)
+                                          f ^MemorySegment (.allocate arena (long FUNC))]
+                                      (when-not (invoke (:get-func api) inst ctx eidx f)
+                                        (throw (ex-info (str "export " key " vanished between type and instance")
+                                                        {:cljwit/error :wasmtime})))
+                                      (export-fn api arena ctx f sig closed in-call key)))])))
+                    found)]
     (->Instance art arena fns (alias-map fns) sigs store closed in-call)))
 
 (defn exports

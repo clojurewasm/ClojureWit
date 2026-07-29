@@ -1,0 +1,13 @@
+package local:iface@1.2.3;
+
+/// A WIT interface, which arrives as a nested component instance rather than
+/// a top-level function — the shape every real WASI world has and the echo
+/// component does not.
+interface math {
+  add: func(a: u32, b: u32) -> u32;
+}
+
+world m {
+  export math;
+  export top-level: func(v: u32) -> u32;
+}

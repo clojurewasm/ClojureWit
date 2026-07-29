@@ -15,18 +15,20 @@
 
 (def ^:private lib (System/getenv "CLJWIT_WASMTIME_LIB"))
 
-(defn- build-component! []
-  (let [core (File/createTempFile "cljwit-host" ".core.wasm")
-        emb  (File/createTempFile "cljwit-host" ".embed.wasm")
-        out  (File/createTempFile "cljwit-host" ".component.wasm")
-        run! (fn [& args]
-               (let [{:keys [exit err]} (apply shell/sh args)]
-                 (when-not (zero? exit)
-                   (throw (ex-info (str "failed: " (pr-str args)) {:err err})))))]
-    (run! "wasm-tools" "parse" "dev/resources/echo.wat" "-o" (str core))
-    (run! "wasm-tools" "component" "embed" "dev/resources/echo.wit" (str core) "-o" (str emb))
-    (run! "wasm-tools" "component" "new" (str emb) "-o" (str out))
-    out))
+(defn- build-component!
+  ([] (build-component! "echo"))
+  ([base]
+   (let [core (File/createTempFile "cljwit-host" ".core.wasm")
+         emb  (File/createTempFile "cljwit-host" ".embed.wasm")
+         out  (File/createTempFile "cljwit-host" ".component.wasm")
+         run! (fn [& args]
+                (let [{:keys [exit err]} (apply shell/sh args)]
+                  (when-not (zero? exit)
+                    (throw (ex-info (str "failed: " (pr-str args)) {:err err})))))]
+     (run! "wasm-tools" "parse" (str "dev/resources/" base ".wat") "-o" (str core))
+     (run! "wasm-tools" "component" "embed" (str "dev/resources/" base ".wit") (str core) "-o" (str emb))
+     (run! "wasm-tools" "component" "new" (str emb) "-o" (str out))
+     out)))
 
 (defn- with-echo
   "Opens the three lifetimes `0014` separates and calls `f` with the instance."
@@ -141,3 +143,29 @@
         ;; `some(none)` cannot be expressed. Asserted rather than hidden.
         (is (nil? ((:echo-option-option-u32 i) nil)))
         (is (= 5 ((:echo-option-option-u32 i) 5)))))))
+
+(deftest interfaces-are-exports-too
+  ;; Every real WASI world puts its functions inside interfaces, which arrive
+  ;; as nested component instances. The echo component has none, so nothing
+  ;; here was exercised until this test existed — the failure `0014` predicted
+  ;; of itself.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping interface test")
+    (let [c (build-component! "iface")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file c))]
+            (with-open [i (host/instantiate a)]
+              (testing "a function inside an interface is named the way WIT spells it"
+                (is (= #{"top-level" "local:iface/math@1.2.3#add"}
+                       (set (host/exports i)))))
+              (testing "and is callable"
+                (is (= 7 ((i "local:iface/math@1.2.3#add") 3 4))))
+              (testing "its signature is reflected like any other"
+                (is (= {:params [["a" :u32] ["b" :u32]] :result :u32}
+                       (host/signature i "local:iface/math@1.2.3#add"))))
+              (testing "no keyword alias — the version and the colon both bar it"
+                (is (thrown? clojure.lang.ExceptionInfo
+                             (get i (keyword "local:iface/math@1.2.3#add"))))
+                (is (fn? (:top-level i)) "the plain label still gets one")))))
+        (finally (.delete ^File c))))))

@@ -56,8 +56,10 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
    `result`, `variant`, `list` and `record` — types compiled from the
    component's own reflected type tree, not hard-coded. `resource`,
    `flags`, `tuple`, `stream`/`future` and `map` fail at instantiation naming
-   the kind. **What is left for S1 is the `require`-a-component surface**,
-   which is how `doc/roadmap.md` states the stage.
+   the kind. Functions inside WIT interfaces are reached too, keyed
+   `"pkg:name/iface@ver#func"`. **What is left for S1 is the
+   `require`-a-component surface**, which is how `doc/roadmap.md` states the
+   stage.
 2. **`0012`'s `ex-data` contract needs a decision.** It promises the WIT type
    name in a thrown `result`, and reflection cannot supply one — the C API has
    no accessor for a type's own name. Either the contract shrinks or the name
