@@ -3,9 +3,15 @@
 _Short by design, and printed at every session start — so findings live in
 `doc/design/`, plans in `doc/roadmap.md`, and only the present tense here._
 
-**Updated:** 2026-07-29 · **Phase:** feasibility (pre-alpha, no compiler)
+**Updated:** 2026-07-30 · **Phase:** S0 closed, entering S1 (pre-alpha, no compiler)
 
 ## Next
+
+**S1's premise is checked** (`0005`, surveyed 2026-07-30): wasmtime's C API
+gained the component model between v40 and v43 — 0 exported
+`wasmtime_component_*` symbols at 40.0.2, 154 at the pinned 47.0.1 — and the
+JVM resolves them through `java.lang.foreign` on Java 25. `tools.json`'s ≥43
+minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
 1. **Record a B6 prediction in `doc/design/0002-*` before writing any of it.**
    B6 has no row in that table yet, and the table is the discipline.
@@ -13,7 +19,11 @@ _Short by design, and printed at every session start — so findings live in
    aggregate argument (`doc/design/0007-*`), which is what "a Rust developer
    calls a Clojure component" actually costs, and which no S0 benchmark
    touches. `doc/roadmap.md` places it at the head of S1.
-3. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
+3. **Get a value across the boundary from the JVM.** Symbol resolution proves
+   reachability, not a working call. This is S1's first real unit, and it will
+   force the open question `0005` now records: how `cljwit.host` locates
+   `libwasmtime` without a machine-specific path.
+4. **Firm up V8's crossover**, the one soft figure left. wasmtime's is now
    nine measured points at 26.6%; V8's interpolates onto a −0.01 ns endpoint
    inside its own spread, so the data bounds it only to 70–90%. Points at
    k = 7, 8, 10 would settle it.

@@ -14,6 +14,7 @@
     "zwasm":          { "url": "https://github.com/clojurewasm/zwasm",            "why": "sibling; a Wasm engine written from scratch, including its JIT notes" },
     "clj.wasm":       { "url": "https://github.com/kanaka/clj.wasm",              "why": "earlier exploration of this exact question" },
 
+    "wasmtime":        { "url": "https://github.com/bytecodealliance/wasmtime",     "large": true, "why": "the C API cljwit.host binds to (crates/c-api), and the reference Component Model implementation" },
     "component-model": { "url": "https://github.com/WebAssembly/component-model", "why": "the Canonical ABI we must emit by hand (S4); issue #525 is GC-in-ABI, still a pre-proposal" },
     "wit-bindgen":     { "url": "https://github.com/bytecodealliance/wit-bindgen", "why": "how every other language binds WIT — no Clojure backend, so this is the shape to match, not to use" },
     "dart-sdk":        { "url": "https://github.com/dart-lang/sdk",                "large": true, "why": "dart2wasm: the closest prior art for lowering a GC'd object model onto WasmGC (pkg/dart2wasm)" },

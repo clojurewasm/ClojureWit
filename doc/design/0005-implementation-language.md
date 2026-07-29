@@ -52,6 +52,51 @@ expand Clojure source. Any other host reimplements macroexpansion.
   requires the compiler to exist before the compiler exists. Revisit once S3
   can compile the analyzer.
 
+## The S1 host path, surveyed 2026-07-30
+
+This note assumes a JVM reaching Wasm through FFM and wasmtime. Entering S1
+means checking that, because `0007` is what happens when a stage is entered on
+an unchecked premise.
+
+**It holds, and the margin is narrower than it looks.** wasmtime's C API gained
+the component model between v40 and v43 — measured by counting exported symbols
+in the shared library the flake pins, not by reading release notes:
+
+| wasmtime | `wasmtime_component_*` exported |
+|---|---|
+| 40.0.2 | **0** |
+| 43.0.1 | 138 |
+| 45.0.0 | 154 |
+| 47.0.1 | 154 |
+
+`tools.json` already requires ≥ 43.0.0, set for WASI 0.3 — the same version
+that first ships the component C API. That coincidence is load-bearing and
+should not be lowered.
+
+From the JVM, `java.lang.foreign.SymbolLookup` on Java 25 resolves
+`wasmtime_component_new`, `_linker_new`, `_linker_instantiate`,
+`_instance_get_func` and `_func_call` out of that library. So the path exists
+end to end; what it does *not* yet show is a value crossing it, which is S1's
+first unit rather than a survey probe.
+
+**One constraint surfaced that S1 has to answer:** finding
+`libwasmtime.dylib` needed an absolute store path, and `.claude/CLAUDE.md`
+forbids machine-specific paths in anything committed. How `cljwit.host` locates
+the library — bundled, `pkg-config`, an env var, a documented convention — is
+an open S1 design question, not a detail.
+
+**The alternative worth watching: [Endive].** A Bytecode Alliance–hosted fork of
+[Chicory] (a pure-Java Wasm runtime) that adds a Cranelift backend and targets
+full Component Model support on the JVM **with no native dependency**. It does
+not have the component model yet — Cranelift and WasmGC come first — and
+Chicory itself lists GC on its 2026 roadmap with no component model at all. So
+today the native path is the only one, and a pure-JVM path is plausibly coming.
+That matters for `cljwit.host`'s deployment story and should be re-checked at
+S1's design, not assumed either way.
+
+[Endive]: https://bytecodealliance.org/articles/endive-and-the-next-chapter-of-webassembly-on-the-jvm
+[Chicory]: https://github.com/dylibso/chicory
+
 ## Consequences
 
 - Development requires a JVM; deployment does not. This must be stated plainly
