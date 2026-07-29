@@ -312,9 +312,12 @@
 
 (declare lower-fn lift-fn)
 
-(defn- write-name! [^Arena arena ^MemorySegment seg off ^String t]
+(defn- write-name!
+  "`alloc` rather than an `Arena`: the import direction must hand wasmtime
+   memory it can `free` (`0017` C), and the export direction must not."
+  [alloc ^MemorySegment seg off ^String t]
   (let [b   (.getBytes t "UTF-8")
-        buf ^MemorySegment (.allocate arena (long (max 1 (alength b))))]
+        buf ^MemorySegment (alloc (max 1 (alength b)))]
     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
     (.set seg I64 (long (+ off STR-SIZE)) (long (alength b)))
     (.set seg ADDR (long (+ off STR-DATA)) buf)))
@@ -355,17 +358,17 @@
 
 (defn- val-of
   "Allocates one wasmtime_component_val_t in `arena` and lowers `v` into it."
-  [lower ^Arena arena v]
-  (let [m ^MemorySegment (.allocate arena (long VAL))]
-    (lower arena m v)
+  [lower alloc v]
+  (let [m ^MemorySegment (alloc VAL)]
+    (lower alloc m v)
     m))
 
 (defn- lower-fn [tree]
   (if (keyword? tree)
     (case tree
-      :string (fn [^Arena arena ^MemorySegment seg v]
+      :string (fn [alloc ^MemorySegment seg v]
                 (.set seg I8 (long 0) (byte (VAL-KIND :string)))
-                (write-name! arena seg UNION v))
+                (write-name! alloc seg UNION v))
       (:own :borrow)
       (let [own? (= :own tree)]
         (fn [_ ^MemorySegment seg v]
@@ -378,19 +381,19 @@
             (when own? (transfer! h)))))
       (scalar-lower tree))
     (case (:kind tree)
-      :enum (fn [^Arena arena ^MemorySegment seg v]
+      :enum (fn [alloc ^MemorySegment seg v]
               (.set seg I8 (long 0) (byte 17))
-              (write-name! arena seg UNION (name v)))
+              (write-name! alloc seg UNION (name v)))
       :option (let [inner (lower-fn (:ty tree))]
-                (fn [^Arena arena ^MemorySegment seg v]
+                (fn [alloc ^MemorySegment seg v]
                   (.set seg I8 (long 0) (byte 18))
                   (let [^MemorySegment q (if (nil? v)
                                            MemorySegment/NULL
-                                           (val-of inner arena v))]
+                                           (val-of inner alloc v))]
                     (.set seg ADDR (long UNION) q))))
       :result (let [lo (some-> (:ok tree) lower-fn)
                     le (some-> (:err tree) lower-fn)]
-                (fn [^Arena arena ^MemorySegment seg v]
+                (fn [alloc ^MemorySegment seg v]
                   (let [[tag payload] v
                         ok? (= :ok tag)
                         f   (if ok? lo le)]
@@ -398,58 +401,58 @@
                     (.set seg I8 (long RES-OK) (byte (if ok? 1 0)))
                     (let [^MemorySegment q (if (nil? f)
                                              MemorySegment/NULL
-                                             (val-of f arena payload))]
+                                             (val-of f alloc payload))]
                       (.set seg ADDR (long RES-VAL) q)))))
       :variant (let [lowers (into {} (map (fn [[n t]] [n (some-> t lower-fn)]))
                                   (:cases tree))]
-                 (fn [^Arena arena ^MemorySegment seg v]
+                 (fn [alloc ^MemorySegment seg v]
                    (let [[tag payload] v
                          nm (name tag)
                          f  (get lowers nm)]
                      (.set seg I8 (long 0) (byte 16))
-                     (write-name! arena seg VAR-NAME nm)
+                     (write-name! alloc seg VAR-NAME nm)
                      (let [^MemorySegment q (if (nil? f)
                                               MemorySegment/NULL
-                                              (val-of f arena payload))]
+                                              (val-of f alloc payload))]
                        (.set seg ADDR (long VAR-VAL) q)))))
       ;; A set of keywords on this side, the names that are on over there.
       ;; Written in declaration order so the wire form is canonical.
       :flags (let [names (:names tree)]
-               (fn [^Arena arena ^MemorySegment seg v]
+               (fn [alloc ^MemorySegment seg v]
                  (let [on  (filterv (fn [n] (contains? v (keyword n))) names)
-                       buf ^MemorySegment (.allocate arena (long (max 1 (* 16 (count on)))))]
+                       buf ^MemorySegment (alloc (max 1 (* 16 (count on))))]
                    (dotimes [i (count on)]
-                     (write-name! arena buf (* 16 i) (nth on i)))
+                     (write-name! alloc buf (* 16 i) (nth on i)))
                    (.set seg I8 (long 0) (byte 20))
                    (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count on)))
                    (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
       :tuple (let [els (mapv lower-fn (:types tree))]
-               (fn [^Arena arena ^MemorySegment seg v]
+               (fn [alloc ^MemorySegment seg v]
                  (let [n   (count els)
-                       buf ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))]
+                       buf ^MemorySegment (alloc (max 1 (* VAL n)))]
                    (dotimes [i n]
-                     ((nth els i) arena (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
+                     ((nth els i) alloc (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
                    (.set seg I8 (long 0) (byte 15))
                    (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
                    (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
       :list (let [el (lower-fn (:element tree))]
-              (fn [^Arena arena ^MemorySegment seg v]
+              (fn [alloc ^MemorySegment seg v]
                 (let [n   (count v)
-                      buf ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))]
+                      buf ^MemorySegment (alloc (max 1 (* VAL n)))]
                   (dotimes [i n]
-                    (el arena (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
+                    (el alloc (.asSlice buf (long (* VAL i)) (long VAL)) (nth v i)))
                   (.set seg I8 (long 0) (byte 13))
                   (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
                   (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
       :record (let [fs (mapv (fn [[n t]] [n (lower-fn t)]) (:fields tree))]
-                (fn [^Arena arena ^MemorySegment seg v]
+                (fn [alloc ^MemorySegment seg v]
                   ;; Fields go out in declaration order: a Clojure map has none.
-                  (let [buf ^MemorySegment (.allocate arena (long (* ENTRY (count fs))))]
+                  (let [buf ^MemorySegment (alloc (* ENTRY (count fs)))]
                     (dotimes [i (count fs)]
                       (let [[nm f] (nth fs i)
                             e (.asSlice buf (long (* ENTRY i)) (long ENTRY))]
-                        (write-name! arena e ENTRY-NAME nm)
-                        (f arena (.asSlice e (long ENTRY-VAL) (long VAL))
+                        (write-name! alloc e ENTRY-NAME nm)
+                        (f alloc (.asSlice e (long ENTRY-VAL) (long VAL))
                            (get v (keyword nm)))))
                     (.set seg I8 (long 0) (byte 14))
                     (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count fs)))
@@ -555,34 +558,37 @@
 ;; a string, a list, a boxed option -- needs `lower-fn` to allocate with
 ;; `malloc` rather than from an Arena (0017 C), which is not built yet. Refusing
 ;; at instantiate with the kind named beats a wrong answer or a corrupt heap.
-(def ^:private IMPORTABLE
+(def ^:private SCALAR
   #{:bool :s8 :u8 :s16 :u16 :s32 :u32 :s64 :u64 :f32 :f64 :char :string})
+
+(defn- unimportable
+  "Kinds the import direction cannot marshal yet. `option`, `result` and
+   `variant` box their payload behind a pointer, which needs
+   `wasmtime_component_val_new` rather than a byte allocator (`0017` C)."
+  [tree]
+  (cond
+    (nil? tree) nil
+    (keyword? tree) (when-not (SCALAR tree) [tree])
+    :else (case (:kind tree)
+            :list (unimportable (:element tree))
+            :tuple (mapcat unimportable (:types tree))
+            :record (mapcat (fn [[_ t]] (unimportable t)) (:fields tree))
+            :enum nil
+            :flags nil
+            [(:kind tree)])))
 
 (defn- import-stub
   "One FFM upcall stub for one host import. Lifts the arguments, calls `f`,
    lowers the result, and converts anything thrown into a wasmtime error --
    a JVM exception unwinding through native frames exits the VM (0017 D)."
   [api ^Arena arena sig f nm dead]
-  (let [lifts  (mapv (fn [[_ t]] (if (= :string t)
-                                   (fn [^MemorySegment seg] (read-str seg UNION))
-                                   (scalar-lift t)))
-                     (:params sig))
+  (let [lifts  (mapv (fn [[_ t]] (lift-fn t nil)) (:params sig))
         rt     (:result sig)
-        lower  (cond
-                 (nil? rt) nil
-                 (= :string rt)
-                 (fn [_ ^MemorySegment seg ^String v]
-                   ;; malloc, not the arena: wasmtime takes ownership and frees.
-                   (let [b   (.getBytes v "UTF-8")
-                         n   (max 1 (alength b))
-                         buf ^MemorySegment (.reinterpret
-                                             ^MemorySegment (invoke (:malloc api) (long n))
-                                             (long n))]
-                     (MemorySegment/copy ^bytes b 0 buf I8 0 (alength b))
-                     (.set seg I8 (long 0) (byte (VAL-KIND :string)))
-                     (.set seg I64 (long (+ UNION STR-SIZE)) (long (alength b)))
-                     (.set seg ADDR (long (+ UNION STR-DATA)) buf)))
-                 :else (scalar-lower rt))
+        lower  (some-> rt lower-fn)
+        ;; 0017 C: wasmtime frees what the callback writes, so every byte of a
+        ;; result comes from malloc. Measured: an Arena pointer survives one
+        ;; call and aborts the process at 2000.
+        m!     (fn [k] (.reinterpret ^MemorySegment (invoke (:malloc api) (long k)) (long k)))
         cb (reify ImportCallback
              (call [_ _data _ctx _ty args _n res _nres]
                (try
@@ -592,7 +598,7 @@
                                 (range (count lifts)))
                        out (apply f vs)]
                    (when lower
-                     (lower nil (.reinterpret ^MemorySegment res (long VAL)) out))
+                     (lower m! (.reinterpret ^MemorySegment res (long VAL)) out))
                    MemorySegment/NULL)
                  (catch Throwable t
                    ;; This handler must not throw: ex-message can be nil, and
@@ -798,8 +804,9 @@
                            :cljwit/export nm}))))
       (try
         (with-open [scratch (Arena/ofConfined)]
-          (dotimes [i n]
-            ((nth ptypes i) scratch (.asSlice args (long (* VAL i)) (long VAL)) (nth vs i)))
+          (let [alloc (fn [k] (.allocate scratch (long k)))]
+            (dotimes [i n]
+              ((nth ptypes i) alloc (.asSlice args (long (* VAL i)) (long VAL)) (nth vs i))))
           (ok! api (str "call " nm) (invoke call! f ctx args (long n) res (long 1)))
           ;; No val_delete on `res`. Its header says it "will deallocate the
           ;; contents of the value but not the value pointer itself", and on a
@@ -863,8 +870,8 @@
             ifaces (atom {})]
         (doseq [[nm f] imports]
           (let [sig (get needed nm)
-                bad (remove IMPORTABLE (cons (:result sig) (map second (:params sig))))
-                bad (remove nil? bad)]
+                bad (distinct (mapcat unimportable
+                                      (cons (:result sig) (map second (:params sig)))))]
             (when (seq bad)
               (throw (ex-info (str nm " uses a type cljwit.host cannot marshal in this direction yet")
                               {:cljwit/error :unsupported-type

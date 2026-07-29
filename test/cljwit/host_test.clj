@@ -429,7 +429,9 @@
           (with-open [a (host/compile e (io/file f))]
             (with-open [i (host/instantiate
                            a {:imports {"local:imps/host@0.1.0#mk"
-                                        (fn [n] (apply str (repeat n "ab")))}})]
+                                        (fn [n] (apply str (repeat n "ab")))
+                                        "local:imps/host@0.1.0#mklist"
+                                        (fn [n] (vec (range n)))}})]
               (testing "a string crosses in both directions within one call"
                 (is (= "ababab" ((i "run") 3)))
                 (is (= "" ((i "run") 0)))
@@ -437,5 +439,13 @@
               (testing "and keeps working, which is what an Arena pointer would not"
                 (is (every? (fn [n] (= (apply str (repeat n "ab")) ((i "run") n)))
                             (map (fn [k] (inc (mod k 9))) (range 500)))
-                    "500 calls, each result freed by wasmtime")))))
+                    "500 calls, each result freed by wasmtime"))
+              (testing "an aggregate result goes through the same lowering"
+                ;; The allocator is a parameter now, so list, tuple, record,
+                ;; enum and flags all reach the import direction unchanged.
+                (is (= [0 1 2 3 4] ((i "run-list") 5)))
+                (is (= [] ((i "run-list") 0)))
+                (is (every? (fn [n] (= (vec (range n)) ((i "run-list") n)))
+                            (map (fn [k] (mod k 9)) (range 500)))
+                    "and the element buffer is freed by wasmtime too")))))
         (finally (.delete ^File f))))))

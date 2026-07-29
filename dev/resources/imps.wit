@@ -1,5 +1,13 @@
 // A host import that returns a string, which is where the two directions stop
 // being mirror images: wasmtime *frees* what the callback writes (`0017` C).
 package local:imps@0.1.0;
-interface host { mk: func(n: u32) -> string; }
-world w { import host; export run: func(n: u32) -> string; }
+interface host {
+  mk: func(n: u32) -> string;
+  /// An aggregate result: the bytes come from malloc, the elements are inline.
+  mklist: func(n: u32) -> list<u32>;
+}
+world w {
+  import host;
+  export run: func(n: u32) -> string;
+  export run-list: func(n: u32) -> list<u32>;
+}
