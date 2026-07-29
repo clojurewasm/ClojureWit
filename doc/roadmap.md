@@ -58,8 +58,10 @@ the analysis is wrong about is worse than leaving it alone.**
 
 So S0's answer is: **the design is viable to exactly the extent that
 whole-program analysis can tell those two cases apart.** That moves the coverage
-report in `doc/design/0004-*` from a nicety to the thing the stage rests on, and
-it makes the crossover hit-rate — unmeasured — the next number that matters.
+report in `doc/design/0004-*` from a nicety to the thing the stage rests on.
+**B7 then measured the crossover: ~26% hit rate on wasmtime, ~80% on V8** — so
+no single specialisation policy is right for both lanes, which is an S3
+decision. The stage's verdict is `doc/design/0010-*`.
 
 ### S1 — `cljwit.host`: call Wasm from JVM Clojure (weeks)
 
@@ -128,10 +130,10 @@ guessing.
 
 ## Open questions we know we have
 
-- **Where is the specialisation crossover?** B5 shows a specialised site is
-  free when the analysis is right and *worse than doing nothing* when it is
-  mostly wrong. The hit rate where those cross is unmeasured, and it is what a
-  compiler needs in order to decide. Next.
+- **Can whole-program analysis actually reach 26% / 80% specialisation
+  coverage on real Clojure?** B7 measured where specialising starts paying;
+  nothing measures whether the analysis gets there. This is the condition S0's
+  verdict rests on and it cannot be answered before S3.
 - **What does a boundary crossing cost?** Every S0 benchmark measures dispatch
   *inside* the module. "A Rust developer calls a Clojure component" is a
   GC-to-linear-memory copy per aggregate argument, and it is unmeasured. This

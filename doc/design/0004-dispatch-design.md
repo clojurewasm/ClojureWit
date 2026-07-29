@@ -1,6 +1,6 @@
 # 0004 — Dispatch design (hypothesis, tested by S0)
 
-**Status:** proposed — **B1, B2 and B5 measured; B3, B4 outstanding**. · 2026-07-29
+**Status:** proposed — **all six S0 benchmarks measured**; verdict in `doc/design/0010-*`. · 2026-07-29
 
 > **Amendment, 2026-07-29 (B1).** The prediction "protocol dispatch within 2× of
 > JVM" failed on wasmtime: **5.61×** (it held on V8, at 0.58×). The cost is not
@@ -144,9 +144,10 @@ condition as rewritten on 2026-07-29 it also **fails on the server lane** —
 design but a statement that its remaining lever is now load-bearing rather than
 optional.
 
-**B2 has run.** The no-cache claim holds as a mechanism — wasmtime is nearly
-indifferent to receiver count — and does not carry the server lane on its own.
-Still open: B5 (does specialisation close it?), B3, B4.
+**All six have run**, and the design survives with four claims amended — see
+`doc/design/0010-*` for the verdict and `doc/design/0002-*` for the numbers.
+The no-cache claim holds as a mechanism and does not carry the server lane on
+its own; specialisation does, above a measured hit rate.
 
 B1 also raises the value of the specialization machinery under "Known weak
 points": on wasmtime it is not an optimization but the only thing that moves
