@@ -6,10 +6,15 @@ interface host {
   resource token { }
   mint: func(v: u32) -> token;
   peek: func(t: borrow<token>) -> u32;
+  /// Takes the resource back: ownership transfers to the host, and there is
+  /// no guest drop afterwards, ever (`0018` C).
+  eat: func(t: token) -> u32;
 }
 world w {
   import host;
   export run: func(v: u32) -> u32;
   /// Mints and keeps the handle, so the instance closes with one outstanding.
   export leak: func(v: u32) -> u32;
+  /// Mints and hands it straight back.
+  export give-back: func(v: u32) -> u32;
 }

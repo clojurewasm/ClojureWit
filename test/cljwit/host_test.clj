@@ -530,7 +530,8 @@
                                   :imports {"local:hres/host@0.1.0#mint"
                                             (fn [v] {:n v})
                                             "local:hres/host@0.1.0#peek"
-                                            (fn [t] (:n t))}})]
+                                            (fn [t] (:n t))
+                                            "local:hres/host@0.1.0#eat" (fn [t] (:n @t))}})]
                   (is (= 42 ((i "run") 42))
                       "the guest minted, borrowed and dropped a host resource")
                   (is (= [{:n 42}] @dropped)
@@ -544,7 +545,8 @@
                                a {:resources {"local:hres/host@0.1.0#token"
                                               {:drop (fn [v] (swap! dropped conj v))}}
                                   :imports {"local:hres/host@0.1.0#mint" (fn [_] same)
-                                            "local:hres/host@0.1.0#peek" (fn [t] (:n t))}})]
+                                            "local:hres/host@0.1.0#peek" (fn [t] (:n t))
+                                            "local:hres/host@0.1.0#eat" (fn [t] (:n @t))}})]
                   ((i "run") 7)
                   ((i "run") 7)
                   (is (= [same same] @dropped)
@@ -558,7 +560,8 @@
                        a {:resources {"local:hres/host@0.1.0#token"
                                       {:drop (fn [v] (swap! dropped conj v))}}
                           :imports {"local:hres/host@0.1.0#mint" (fn [v] {:kept v})
-                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))}})]
+                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))
+                                    "local:hres/host@0.1.0#eat" (fn [t] (:kept @t))}})]
                 (is (= 9 ((i "leak") 9)) "the guest mints and keeps the handle")
                 (is (= [] @dropped) "nothing dropped while it is held")
                 (.close ^java.lang.AutoCloseable i)
@@ -570,7 +573,8 @@
                        a {:resources {"local:hres/host@0.1.0#token"
                                       {:drop (fn [_] (throw (ex-info "close! failed" {})))}}
                           :imports {"local:hres/host@0.1.0#mint" (fn [v] {:kept v})
-                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))}})]
+                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))
+                                    "local:hres/host@0.1.0#eat" (fn [t] (:kept @t))}})]
                 (is (= 5 ((i "run") 5))
                     "the guest's drop still succeeds — 0017 D would have killed the instance")
                 (is (= 1 (count (host/drop-failures i)))
@@ -578,6 +582,28 @@
                 (is (empty? (host/drop-failures i))
                     "reading them clears them, so close has nothing to rethrow")
                 (.close ^java.lang.AutoCloseable i)))
+
+            (testing "0018 C — an own parameter hands the caller the obligation"
+              (let [dropped (atom [])
+                    got (atom nil)]
+                (with-open [i (host/instantiate
+                               a {:resources {"local:hres/host@0.1.0#token"
+                                              {:drop (fn [v] (swap! dropped conj v))}}
+                                  :imports {"local:hres/host@0.1.0#mint" (fn [v] {:n v})
+                                            "local:hres/host@0.1.0#peek" (fn [t] (:n t))
+                                            "local:hres/host@0.1.0#eat"
+                                            (fn [t]
+                                              (reset! got t)
+                                              (is (instance? java.lang.AutoCloseable t)
+                                                  "an own arrives closeable, not bare")
+                                              (:n @t))}})]
+                  (is (= 4 ((i "give-back") 4)))
+                  (is (= [] @dropped)
+                      "the guest will never drop it, so nothing has yet")
+                  (.close ^java.lang.AutoCloseable @got)
+                  (is (= [{:n 4}] @dropped) "closing it runs :drop"))
+                (is (= [{:n 4}] @dropped)
+                    "and the instance's own close does not drop it again")))
 
             (testing "a resource the component does not declare is a typo"
               (let [ex (is (thrown? clojure.lang.ExceptionInfo

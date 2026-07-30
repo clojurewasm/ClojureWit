@@ -1,7 +1,7 @@
 # 0018 — Host-defined resources in `cljwit.host`
 
-**Status:** A, B, D and E implemented (`src/cljwit/host.clj`, one host resource
-type per instance); C still `proposed` · 2026-07-30 · third version. Two adversarial rounds have
+**Status:** accepted — A through E implemented (`src/cljwit/host.clj`), with
+one host resource type per instance · 2026-07-30 · third version. Two adversarial rounds have
 each falsified something load-bearing; what they found is kept below, because
 it is most of the evidence.
 

@@ -622,16 +622,30 @@
   ;; A host resource in an import's signature is one this instance declared,
    ;; so `:own`/`:borrow` here mean the rep table rather than a guest handle.
    ;; One host resource type per instance for now — the tag is fixed at 1.
-  (let [hres-lift (fn [^MemorySegment seg]
+  (let [transferred (fn [v]
+                      ;; 0018 C: the guest will never drop this, so the caller
+                      ;; gets the obligation with the value rather than a bare
+                      ;; value and no way to know.
+                      (reify java.lang.AutoCloseable
+                        clojure.lang.IDeref
+                        (deref [_] v)
+                        (close [_] (when-let [d @(:drop rtab)] (d v)))))
+        hres-lift (fn [own? ^MemorySegment seg]
                     (let [any ^MemorySegment (.get seg ADDR (long UNION))
                           out ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
                       (ok! api "any_to_host" (invoke (:any-to-hres api) (:ctx rtab) any out))
                       (let [hr ^MemorySegment (.get out ADDR (long 0))
                             rep (invoke (:hres-rep api) hr)]
+                        ;; Only the host_t is ours to delete; deleting the
+                        ;; `any` aborts the process.
                         (invoke (:hres-delete api) hr)
-                        (first (get @(:table rtab) rep)))))
-        lifts  (mapv (fn [[_ t]] (if (contains? #{:own :borrow} t)
-                                   hres-lift
+                        (let [[v] (get @(:table rtab) rep)]
+                          (if own?
+                            (do (swap! (:table rtab) dissoc rep) (transferred v))
+                            v)))))
+        lifts  (mapv (fn [[_ t]] (case t
+                                   :own    (partial hres-lift true)
+                                   :borrow (partial hres-lift false)
                                    (lift-fn t nil)))
                      (:params sig))
         rt     (:result sig)
