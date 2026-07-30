@@ -103,12 +103,23 @@ _Short by design, and printed at every session start — so findings live in
    component (`0007`'s scalar path, zero Canonical ABI machinery, the
    tag export tolerated), and **`cljwit.host` calls it from the JVM:
    6765 through the component boundary** (2026-07-30). Next unit: the
-   S4 survey proper — the Canonical ABI's string/list lowering as
-   specced *today*, the Kotlin sample read closely, `0007`'s dated
-   claims re-verified — before a design note shapes S4's first real
-   slice (strings are also what the corpus's message comparisons and
-   printing wait on). S2's watcher waits for namespace loading,
-   post-S3 compiler work either way.
+   S4 survey proper — **done, and its design note is written**
+   (`0030`, proposed, reviewed): the Canonical ABI re-read at a
+   pinned commit (2026-07-28 HEAD), `0007` re-verified by running
+   (no `gc` canonopt; #525 idle since April; wasmtime 47 still panics
+   on the gc call path), Kotlin and zwasm read as prior art — Kotlin
+   crosses the boundary with a per-byte loop and a bump arena, so
+   B6's 10× is the frontier, not our deficiency. Decided: **utf8**
+   (identity-class against `cljwit.host`'s own UTF-8 paths), a
+   **bump-arena `cabi_realloc`** reset at next entry (provably
+   conservative — hosts lift inside the call), **per-export
+   trampolines** with the worked echo core signature pinned, slice
+   order string-echo and `list<u8>` first — marshalling only, body is
+   identity. Next unit: **the echo slice** — the emitter grows
+   `memory` + `cabi_realloc` + string trampolines, round-tripped
+   against `cljwit.host` (80 assertions on the other side — the
+   survey said 87; the review measured). S2's watcher waits for
+   namespace loading, post-S3 compiler work either way.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

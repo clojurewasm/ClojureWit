@@ -124,7 +124,9 @@ executes carries GC references across a component boundary, so this stage is a
 lift/lower layer over **linear memory**, plus `cabi_realloc`, plus resource
 handle tables. Scalar-only exports skip all of it. The sibling zwasm's
 equivalent is 8,574 lines and required no core changes — bounded work rather
-than a research problem, but a stage, not a detail of one.
+than a research problem, but a stage, not a detail of one. (Decomposed
+2026-07-30, `doc/design/0030`: the share analogous to S4's guest side is
+~2,250 lines — the rest is engine-side machinery this project delegates.)
 
 ### Running through all of it: two modes
 
