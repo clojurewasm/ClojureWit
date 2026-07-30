@@ -91,12 +91,20 @@ _Short by design, and printed at every session start — so findings live in
    classify as errors, out-of-slice stays loud. The dev assembler
    entered `tools.json` and `bb check` materializes it (guarded
    `npm ci`) — `0026`'s promise kept on its named trigger. An editor
-   connection (CIDER/Calva) remains a manual check. Next: **entering
-   S4 starts with its survey** (`/next`'s stage rule; `0007` sized the
-   stage — lift/lower over linear memory, `cabi_realloc`, resource
-   tables — and `/survey`'s Kotlin sample is the closest prior art);
-   S2's watcher waits for namespace loading, post-S3 compiler work
-   either way.
+   connection (CIDER/Calva) remains a manual check. **S4 is entered
+   the way `/next`'s stage rule demands — by running what would fail
+   if its premise were wrong**: `bb spike-s4` has the project's two
+   deliverables meet for the first time — `cljwit` compiles
+   `(defn fib …)` to a prod module, `wasm-tools` wraps it as a
+   component (`0007`'s scalar path, zero Canonical ABI machinery, the
+   tag export tolerated), and **`cljwit.host` calls it from the JVM:
+   6765 through the component boundary** (2026-07-30). Next unit: the
+   S4 survey proper — the Canonical ABI's string/list lowering as
+   specced *today*, the Kotlin sample read closely, `0007`'s dated
+   claims re-verified — before a design note shapes S4's first real
+   slice (strings are also what the corpus's message comparisons and
+   printing wait on). S2's watcher waits for namespace loading,
+   post-S3 compiler work either way.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

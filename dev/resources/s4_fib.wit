@@ -1,0 +1,8 @@
+// The S4 entry spike's world (doc/status.md): a cljwit-compiled module
+// exports exactly one scalar function, which is the boundary shape 0007
+// showed costs nothing.
+package cljwit:spike;
+
+world fib-world {
+  export entry: func() -> s64;
+}

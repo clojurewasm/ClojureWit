@@ -55,6 +55,9 @@
   repl        {:doc  "The ClojureWit nREPL server (0029): evals compile to Wasm, run in the engine child"
                :task (run "clojure" "-M:repl")}
 
+  spike-s4    {:doc  "S4 entry: cljwit compiles fib, wasm-tools wraps it, cljwit.host calls it. Needs `nix develop`."
+               :task (run "clojure" "-M:dev" "-m" "cljwit.spike.s4-end-to-end")}
+
   test        {:doc  "Unit tests (JVM)"
                :task (if (and (fs/exists? "test") (seq (fs/glob "test" "**.clj")))
                        (run "clojure" "-X:test")
