@@ -433,7 +433,11 @@
     (lower alloc m v)
     m))
 
-(defn- lower-fn [tree]
+(defn- lower-fn
+  "`ctx` is the store the compiled call belongs to, when there is one to
+   check handles against; the import direction passes nil (a resource in an
+   import's signature routes through the rep table, never here)."
+  [tree ctx]
   (if (keyword? tree)
     (case tree
       :string (fn [alloc ^MemorySegment seg v]
@@ -444,6 +448,13 @@
         (fn [_ ^MemorySegment seg v]
           (let [^Handle h v
                 ^MemorySegment p (live-ptr h (if own? "transferring" "borrowing"))]
+            ;; A handle from another instance would surface as wasmtime's
+            ;; `mismatched resource types` -- an error about the wrong thing.
+            ;; The handle knows its store; say so instead (0020 B).
+            (when (and ctx (not= (.address ^MemorySegment (.-ctx h))
+                                 (.address ^MemorySegment ctx)))
+              (throw (ex-info "resource handle belongs to a different instance"
+                              {:cljwit/error :wrong-instance})))
             (.set seg I8 (long 0) (byte RESOURCE))
             (.set seg ADDR (long UNION) p)
             ;; A borrow leaves the handle live; an own is stale the moment the
@@ -454,15 +465,15 @@
       :enum (fn [alloc ^MemorySegment seg v]
               (.set seg I8 (long 0) (byte 17))
               (write-name! alloc seg UNION (name v)))
-      :option (let [inner (lower-fn (:ty tree))]
+      :option (let [inner (lower-fn (:ty tree) ctx)]
                 (fn [alloc ^MemorySegment seg v]
                   (.set seg I8 (long 0) (byte 18))
                   (let [^MemorySegment q (if (nil? v)
                                            MemorySegment/NULL
                                            (val-of inner alloc v))]
                     (.set seg ADDR (long UNION) q))))
-      :result (let [lo (some-> (:ok tree) lower-fn)
-                    le (some-> (:err tree) lower-fn)]
+      :result (let [lo (some-> (:ok tree) (lower-fn ctx))
+                    le (some-> (:err tree) (lower-fn ctx))]
                 (fn [alloc ^MemorySegment seg v]
                   (let [[tag payload] v
                         ok? (= :ok tag)
@@ -473,7 +484,7 @@
                                              MemorySegment/NULL
                                              (val-of f alloc payload))]
                       (.set seg ADDR (long RES-VAL) q)))))
-      :variant (let [lowers (into {} (map (fn [[n t]] [n (some-> t lower-fn)]))
+      :variant (let [lowers (into {} (map (fn [[n t]] [n (some-> t (lower-fn ctx))]))
                                   (:cases tree))]
                  (fn [alloc ^MemorySegment seg v]
                    (let [[tag payload] v
@@ -496,7 +507,7 @@
                    (.set seg I8 (long 0) (byte 20))
                    (.set seg I64 (long (+ UNION VEC-SIZE)) (long (count on)))
                    (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
-      :tuple (let [els (mapv lower-fn (:types tree))]
+      :tuple (let [els (mapv #(lower-fn % ctx) (:types tree))]
                (fn [alloc ^MemorySegment seg v]
                  (let [n   (count els)
                        buf ^MemorySegment (alloc (max 1 (* VAL n)))]
@@ -505,7 +516,7 @@
                    (.set seg I8 (long 0) (byte 15))
                    (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
                    (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
-      :list (let [el (lower-fn (:element tree))]
+      :list (let [el (lower-fn (:element tree) ctx)]
               (fn [alloc ^MemorySegment seg v]
                 (let [n   (count v)
                       buf ^MemorySegment (alloc (max 1 (* VAL n)))]
@@ -514,7 +525,7 @@
                   (.set seg I8 (long 0) (byte 13))
                   (.set seg I64 (long (+ UNION VEC-SIZE)) (long n))
                   (.set seg ADDR (long (+ UNION VEC-DATA)) buf))))
-      :record (let [fs (mapv (fn [[n t]] [n (lower-fn t)]) (:fields tree))]
+      :record (let [fs (mapv (fn [[n t]] [n (lower-fn t ctx)]) (:fields tree))]
                 (fn [alloc ^MemorySegment seg v]
                   ;; Fields go out in declaration order: a Clojure map has none.
                   (let [buf ^MemorySegment (alloc (* ENTRY (count fs)))]
@@ -706,7 +717,7 @@
                      (invoke (:hres-delete api) hr)
                      (.set seg I8 (long 0) (byte RESOURCE))
                      (.set seg ADDR (long UNION) ^MemorySegment (.get out ADDR (long 0)))))
-                 :else (lower-fn rt))
+                 :else (lower-fn rt nil))
         ;; 0017 C: wasmtime frees what the callback writes, so every byte of a
         ;; result comes from malloc. Measured: an Arena pointer survives one
         ;; call and aborts the process at 2000.
@@ -913,7 +924,7 @@
    (`0014` E)."
   [api ^Arena arena ^MemorySegment ctx ^MemorySegment f sig
    ^AtomicBoolean closed ^AtomicReference in-call nm rt dead]
-  (let [ptypes  (mapv (comp lower-fn second) (:params sig))
+  (let [ptypes  (mapv (fn [[_ t]] (lower-fn t ctx)) (:params sig))
         n       (count ptypes)
         rlift   (when (:result sig) (lift-fn (:result sig) rt))
         args    ^MemorySegment (.allocate arena (long (max 1 (* VAL n))))
@@ -1320,6 +1331,23 @@
    was never read."
   [^Instance i]
   (let [a (:errs (.-rtab i))] (first (swap-vals! a (constantly [])))))
+
+(defn unwrap
+  "`0012`'s result sugar, as a library function rather than a generated
+   wrapper (`0020` D): `[:ok v]` → v, `[:err e]` → ex-info carrying e under
+   :wit/error. Anything else passes through untouched, so it composes over
+   exports that are not result-typed — which also means a *variant* whose
+   case happens to be named ok or err is indistinguishable here; unwrap is
+   opt-in for exactly that reason."
+  [v]
+  (if (and (vector? v) (= 2 (count v)))
+    (case (nth v 0)
+      :ok  (nth v 1)
+      :err (throw (ex-info (str "component returned an error: " (pr-str (nth v 1)))
+                           {:cljwit/error :wit-error
+                            :wit/error (nth v 1)}))
+      v)
+    v))
 
 (defn exports
   "Every exported function, by its exact WIT name."

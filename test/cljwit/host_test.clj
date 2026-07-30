@@ -160,6 +160,26 @@
                                  (host/exports i)))))))))
         (finally (.delete ^File c))))))
 
+(deftest a-handle-belongs-to-its-instance
+  ;; `0020` B: a handle from instance A passed to instance B used to surface
+  ;; as wasmtime's `mismatched resource types` — an error about the wrong
+  ;; thing. The handle knows its store, so the mismatch is named.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping wrong-instance test")
+    (let [f (build-component! "res")]
+      (try
+        (with-open [e  (host/engine)
+                    a  (host/compile e (io/file f))
+                    i1 (host/instantiate a)
+                    i2 (host/instantiate a)]
+          (let [h  ((i1 "local:res/bag@0.1.0#[constructor]counter") 5)
+                ex (is (thrown? clojure.lang.ExceptionInfo
+                                ((i2 "local:res/bag@0.1.0#[method]counter.bump") h 1)))]
+            (is (= :wrong-instance (:cljwit/error (ex-data ex))))
+            (is (int? ((i1 "local:res/bag@0.1.0#[method]counter.bump") h 1))
+                "and the instance it belongs to still takes it")))
+        (finally (.delete ^File f))))))
+
 (deftest reflection-cleanup-survives-repetition
   ;; type_delete, item_delete and resource_type_delete are required by the
   ;; pinned headers and fire on every reflection. The val_delete incident
