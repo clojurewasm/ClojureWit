@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- The browser lane's smallest artifact (S3's stop condition says "a
+     browser", and until this page ran, only node's V8 had run anything).
+     Serve the repo root and open:
+
+       python3 -m http.server 8123
+       open "http://localhost:8123/corpus/browser.html?m=target/corpus/fn-defn-fib.dev.wasm"
+
+     The page instantiates one emitted corpus module and prints entry()'s
+     result, or the classified trap/exn, in the same vocabulary as
+     corpus/run.mjs (0023, 0027). -->
+<meta charset="utf-8">
+<title>ClojureWit corpus — browser lane</title>
+<pre id="out">loading…</pre>
+<script type="module">
+  const out = document.getElementById("out");
+  const path = new URLSearchParams(location.search).get("m");
+  try {
+    const bytes = await (await fetch("/" + path)).arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    try {
+      out.textContent = `result ${instance.exports.entry()}`;
+    } catch (e) {
+      if (e instanceof WebAssembly.Exception && e.is(instance.exports["clj-exn"]))
+        out.textContent = `exn ${instance.exports.exn_class(e.getArg(instance.exports["clj-exn"], 0))}`;
+      else if (e instanceof WebAssembly.RuntimeError || e instanceof RangeError)
+        out.textContent = `trap ${e.message}`;
+      else throw e;
+    }
+  } catch (e) {
+    out.textContent = `ERROR ${e.message}`;
+  }
+</script>

@@ -25,7 +25,8 @@ _Short by design, and printed at every session start — so findings live in
    real `clojure` (fresh namespace per entry) and through
    `cljwit.analyze` → `cljwit.emit` → `wasm-tools` → **wasmtime and V8,
    in both modes**. `(defn fib [n] …) (fib 20)` returns 6765 on both
-   engines — the roadmap's S3 sentence, minus an actual browser page.
+   engines — the roadmap's S3 sentence, now including a real browser
+   page (`corpus/browser.html`, below).
    **The modes now genuinely diverge**: `:prod` direct-links fn defs
    (immutable constant global + plain `call`, `^:dynamic`/`^:redef`
    excluded, re-`def` refused), `:dev` keeps var indirection; the
@@ -64,11 +65,15 @@ _Short by design, and printed at every session start — so findings live in
    corpus), the V8 lane class-precise, the wasmtime CLI lane
    class-blind by a named hole, and traps stay uncatchable — including
    stack exhaustion, a divergence numbered before `try` exists. **Every
-   S3 design decision is now closed.** Next: the S3 stop condition
-   still says *a browser*, and only node's V8 has run anything — the
-   next unit is **a real browser page running a corpus module**, the
-   smallest thing that would fail if "browser" were untrue; then S2's
-   nREPL unit, now unblocked on both sides.
+   S3 design decision is now closed, and the stop condition's
+   "browser" is no longer a figure of speech**: `corpus/browser.html`
+   ran in a real Chrome tab — `fn-defn-fib` printed `result 6765` and
+   `throw-add-overflow` printed `exn 1`, the same vocabulary as the
+   node runner (2026-07-30; serve the repo root, the page header says
+   how). Next unit: **S2's nREPL entry point**, unblocked on both
+   sides — the shadow-cljs shape from `doc/roadmap.md`, with the
+   dev-loop pieces decided (`0026` assembler, `0009` open world,
+   `0027` tag import/export arriving with the shared runtime).
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
