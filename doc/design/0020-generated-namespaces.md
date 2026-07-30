@@ -45,9 +45,10 @@ anywhere. The *loud* half is already covered — marshalling is rebuilt from
 the live component at instantiate, so a renamed export fails
 `:no-such-export` with a did-you-mean and a changed argument list fails
 `:wrong-arity`. The silent half is exactly the regenerate-and-diff check
-that `cljwit.edn` (S2) owes its components; the API hash makes it a string
-compare. Until S2 exists, staleness detection is the reviewer's, and this
-paragraph is the warning.
+that `cljwit.edn` (S2) owes its components. *(Superseded on that point by
+`0021` B: the hash alone misses hand edits and `:rename` changes, so the
+check became tiered — hash line for `:stale`, bytes for `:modified` — and
+the hash's job shrank to distinguishing the two.)*
 
 ### B. Every var takes the instance first
 

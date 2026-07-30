@@ -36,6 +36,12 @@
         (throw (ex-info (str "unknown key(s) in " f ": " (pr-str (vec bad)))
                         {:cljwit/error :bad-project :cljwit/keys (vec bad)})))
       (let [comps (:components cfg)
+            ;; This guard must run before anything walks comps: a vector here
+            ;; — the rejected first-draft shape, and the likeliest mistake —
+            ;; would otherwise surface as a raw nth exception.
+            _     (when-not (map? comps)
+                    (throw (ex-info ":components must be a map of namespace symbol -> options"
+                                    {:cljwit/error :bad-project})))
             errs  (into []
                         (mapcat (fn [[nss opts]]
                                   (cond
@@ -48,11 +54,20 @@
                                      (when-let [bad (seq (remove ENTRY-KEYS (keys opts)))]
                                        [(str nss " — unknown key(s): " (pr-str (vec bad)))])
                                      (when-not (string? (:wasm opts))
-                                       [(str nss " — :wasm must be a path string")])))))
+                                       [(str nss " — :wasm must be a path string")])
+                                     ;; io/file throws on an absolute child, so
+                                     ;; an absolute path here would crash later
+                                     ;; without naming its entry. Everything in
+                                     ;; this file is root-relative by design
+                                     ;; (0021 A) — a committed absolute path is
+                                     ;; a machine-specific assumption anyway.
+                                     (for [k [:wasm :dir]
+                                           :let [v (get opts k)]
+                                           :when (and (string? v)
+                                                      (.isAbsolute (io/file v)))]
+                                       (str nss " — " k " must be relative to cljwit.edn: "
+                                            (pr-str v)))))))
                         comps)]
-        (when-not (map? comps)
-          (throw (ex-info ":components must be a map of namespace symbol -> options"
-                          {:cljwit/error :bad-project})))
         (when (seq errs)
           (throw (ex-info (str "cljwit.edn: " (str/join "; " errs))
                           {:cljwit/error :bad-project :cljwit/errors errs})))
@@ -145,10 +160,12 @@
   "Touches nothing. {:ok [...] :stale [...] :modified [...] :missing [...]
    :orphans [...]} — :stale means the component's API changed (the
    exports-hash line differs: regenerate); :modified means the API did not
-   (a hand edit, a changed option, or a newer generator — the file's
-   generator: line says which); :orphans are files under a configured :dir
-   that carry the generated header but no entry, which is the silent
-   staleness this file exists to kill (0021 B). Nothing is deleted."
+   (a hand edit, a changed option, a newer generator, or a direct
+   write-ns! over a sync!-managed file — the generator: and regenerate:
+   lines say which); :orphans are generated files no entry claims, found
+   under the :dirs current entries configure plus the default \"src\" —
+   so removing the *last* entry of a custom :dir also removes that dir
+   from view, a recorded limit (0021 B). Nothing is deleted."
   ([] (status nil))
   ([opts]
    (let [proj    (read-project (or opts {}))
@@ -160,19 +177,26 @@
                              (update acc :missing conj (str file))
                              (= src (slurp file))
                              (update acc :ok conj (str file))
-                             (not= (hash-line src) (hash-line (slurp file)))
+                             ;; No hash line at all is an edit, not a changed
+                             ;; component — :stale must only ever mean "the
+                             ;; API moved".
+                             (and (some? (hash-line (slurp file)))
+                                  (not= (hash-line src) (hash-line (slurp file))))
                              (update acc :stale conj (str file))
                              :else
                              (update acc :modified conj (str file))))
                          {:ok [] :stale [] :modified [] :missing [] :orphans []}
                          entries)
-         orphans (for [d     (distinct (map :dir entries))
-                       ^File f (file-seq (io/file (:root proj) (str d)))
-                       :when (and (.isFile f)
-                                  (str/ends-with? (.getName f) ".clj")
-                                  (not (claimed (str (.getCanonicalFile f))))
-                                  (generated? f))]
-                   (str (.getCanonicalFile f)))]
+        ;; distinct twice over: "src" is always scanned, so a custom :dir
+        ;; under it would visit the same file through both roots.
+         orphans (distinct
+                  (for [d     (distinct (cons "src" (map :dir entries)))
+                        ^File f (file-seq (io/file (:root proj) (str d)))
+                        :when (and (.isFile f)
+                                   (str/ends-with? (.getName f) ".clj")
+                                   (not (claimed (str (.getCanonicalFile f))))
+                                   (generated? f))]
+                    (str (.getCanonicalFile f))))]
      (update base :orphans into orphans))))
 
 (defn check

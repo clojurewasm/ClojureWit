@@ -89,6 +89,14 @@ a public API; it should name the file's owner.
   someone deleted the entry and left the namespace loadable — is exactly
   the silent staleness this unit exists to kill, so `status` reports it.
   Nothing is deleted: removal is the human's, with the list in hand.
+  One recorded limit: the scan covers the `:dir`s of *current* entries
+  plus the default `src`, so deleting the last entry of a custom `:dir`
+  also removes that dir from view. Scanning the whole tree instead would
+  make `status` cost scale with the repo, not the config.
+- **Paths in the file are relative, enforced.** An absolute `:wasm` or
+  `:dir` is refused with its entry named — `io/file` throws on an
+  absolute child, so it would otherwise crash without provenance, and a
+  committed absolute path is a machine-specific assumption anyway.
 - **`check` is the CI verb**, and it enumerates on stdout and in the
   exception message — measured: `-X` shows a caller only `ex-message`;
   `ex-data` lands in a temp-file report CI discards.

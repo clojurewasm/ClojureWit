@@ -52,7 +52,17 @@
   (testing "a missing wasm is named before anything is written"
     (let [d (tmp-project! {:components {'acme.a {:wasm "nowhere.wasm"}}})
           ex (is (thrown? clojure.lang.ExceptionInfo (project/sync! (opts d))))]
-      (is (str/includes? (ex-message ex) "nowhere.wasm")))))
+      (is (str/includes? (ex-message ex) "nowhere.wasm"))))
+  (testing "a non-map :components gets the written message, not an nth trace"
+    ;; The vector is the rejected first-draft shape — the likeliest mistake.
+    (let [d (tmp-project! {:components [{:ns 'acme.a :wasm "a.wasm"}]})
+          ex (is (thrown? clojure.lang.ExceptionInfo (project/status (opts d))))]
+      (is (= :bad-project (:cljwit/error (ex-data ex))))))
+  (testing "an absolute path is refused with its entry named"
+    (let [d (tmp-project! {:components {'acme.a {:wasm "/abs/a.wasm"}}})
+          ex (is (thrown? clojure.lang.ExceptionInfo (project/status (opts d))))]
+      (is (str/includes? (ex-message ex) "acme.a"))
+      (is (str/includes? (ex-message ex) "relative to cljwit.edn")))))
 
 (defn- build-echo-into! [^File d]
   (let [core (File/createTempFile "cljwit-proj" ".core.wasm")
@@ -105,6 +115,12 @@
             (spit f (str/replace pristine #";; exports-hash: sha256:[0-9a-f]+"
                                  ";; exports-hash: sha256:0000"))
             (is (= [(str (.getCanonicalFile f))] (:stale (project/status o))))
+            (spit f pristine)))
+
+        (testing "deleting the hash line altogether is :modified — an edit, not an API change"
+          (let [pristine (slurp f)]
+            (spit f (str/replace pristine #";; exports-hash: sha256:[0-9a-f]+\n" ""))
+            (is (= [(str (.getCanonicalFile f))] (:modified (project/status o))))
             (spit f pristine)))
 
         (testing "a deleted file is :missing"
