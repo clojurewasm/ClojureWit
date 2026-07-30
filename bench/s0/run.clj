@@ -244,6 +244,27 @@
     :what "floor: the same loop unboxed — a raw i32 add"
     :wat "bench/s0/b3_arith.wat" :export "bench_unboxed"
     :jvm "s0.jvm.b3" :variant "unboxed"
+    :expect identity}
+   ;; B8 — the boxed-i64 lane (0022 C, predictions in 0002 before the
+   ;; run). Values sit at 2^30..2^30+n, outside i31, so the mixed
+   ;; dispatch always takes the boxed arm and the canonicalization probe
+   ;; never fires — both arms stay real code. No :jvm rows: the boxed
+   ;; baseline is B3's, rerun in the same invocation for comparability.
+   {:id "B8k"
+    :what "boxed-i64 floor: known-boxed operands — load, add, check, allocate"
+    :wat "bench/s0/b8_boxed.wat" :export "b8_known"
+    :expect #(+ 1073741824 %)}
+   {:id "B8b"
+    :what "the lane as compiled: mixed-representation dispatch on both operands"
+    :wat "bench/s0/b8_boxed.wat" :export "b8_mixed"
+    :expect #(+ 1073741824 %)}
+   {:id "B8c"
+    :what "B8b plus the canonicalization probe on every result (untaken)"
+    :wat "bench/s0/b8_boxed.wat" :export "b8_canon"
+    :expect #(+ 1073741824 %)}
+   {:id "B8i"
+    :what "B3's i31 fast path with a real allocating slow path present, untaken"
+    :wat "bench/s0/b8_boxed.wat" :export "b8_slow_real"
     :expect identity}])
 
 ;; --- shelling out ----------------------------------------------------------

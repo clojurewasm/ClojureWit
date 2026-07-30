@@ -43,6 +43,8 @@ Against JVM Clojure as the reference. Filled in by the S0 run
 | B7 | the specialisation crossover — guarded cost vs guard hit rate | **recorded 2026-07-29, before the run.** Solving B5's two points gives a per-miss cost of ~14.6 ns against generic dispatch's 9.2, and ~5 ns is far too much for a `ref.test`. So the guard's cost is **branch misprediction, not the test** — which predicts the curve is **not monotonic in hit rate**: cheap at 100% *and* at 0% (both perfectly predictable), worst in the middle. If instead it rises monotonically as hits fall, the cost is the test and this reasoning is wrong. | **wrong, and the stated falsifier is what happened.** The curve is **monotonic** on both lanes; 0% hit is the *worst* point (12.05) despite being perfectly predictable. Crossover roughly **25% on wasmtime, 80% on V8**, ±5 points — the **3× ratio between lanes is the robust part** (a re-run reproduces 3.06× against 3.04×); the individual figures are not, for three reasons recorded below. |
 | B7b | is B7's generic-control hump signal or noise? k = 1, 2, 4, 5 | **recorded 2026-07-29, before the run.** The hump is **real, and it is indirect-branch prediction on the generic path**: at k=0 and k=11 the ring holds one type so `call_ref` always goes to the same target and is predicted; in between it alternates between two, and mispredicts. That predicts the new points **trace a smooth hump rather than a flat 8.5**, and the wasmtime crossover stays near 25% rather than moving to 41%. Falsified if k=1 and k=2 come in flat at the endpoint value. It does not explain why B2's *ten*-type ring (9.22) is cheaper than this two-type one (10.12), and that stays open. | **confirmed, and the lane asymmetry confirms the mechanism.** The generic control traces a smooth hump — 8.51, 9.09, 9.31, 10.12, 10.12, 10.55, 10.31, 9.24, 8.50 — rising from both single-type endpoints toward the middle. **On V8 there is no hump at all** (0.856–0.936 across every ring), which is what "the engine speculates, so indirect-branch predictability does not dominate" predicts. The wasmtime crossover lands at **26.6%**, so ~25% stands and 41% is ruled out. The ten-vs-two-type anomaly is untouched and stays open. |
 | B6 | the component boundary: what an aggregate argument costs to lower into linear memory | **recorded 2026-07-30, before the run.** WasmGC has **no bulk copy from a GC array into linear memory** — `array.copy` is array→array and `array.new_data`/`init_data` read a *data segment*, not memory (checked against zwasm's opcode set, a full Wasm 3.0 GC implementation). So the Canonical ABI's lowering is a per-element loop, and the prediction is: **`(array i8)` ≈ 0.5 ns/byte on wasmtime; `(array i64)` ≈ 8× better** because it moves eight bytes per iteration; **`memory.copy` ≈ 0.02 ns/byte**, memcpy-class, which is what a linear-memory language pays. If so the byte path is ~25× a Rust component's and the i64 path ~3×, and `0008` licenses choosing the wider representation. **Falsified if `(array i64)` is not ~8× `(array i8)`** — then the cost is not per-element loop overhead and the representation lever is worthless. | **confirmed on the lever, wrong on the ratios.** `(array i64)` is **7.5×** `(array i8)` on wasmtime and 7.1× on V8, so the representation lever is real. But `memory.copy` came in at **0.0086 ns/byte**, 2.3× better than predicted, so the gap to a linear-memory language is **worse** than predicted: 72× naive and **9.6× even with the i64 representation**, against the predicted 25× and 3×. |
+| B8 | the boxed-i64 lane (`0022` C): what fib's n = 46…92 domain actually costs | **recorded 2026-07-30, before the run.** The lane is load+load+`i64.add`+overflow check+**allocation per op**, and allocation should dominate — but asymmetrically, the *reverse* of B3's parity: **V8 ≈ 2–4 ns/op** (generational nursery, bump allocation), **wasmtime ≈ 10–30 ns/op** (no comparable nursery in its GC at 47). Against the JVM's boxed 2.98 (B3): V8 near parity, wasmtime 3–10× worse. Mixed-representation dispatch on both operands (B8b−B8k) adds **+0.5–1.5 on V8, +1–3 on wasmtime** — two `ref.test`+casts, B4-class each. The canonicalization probe on every result (B8c−B8b, untaken at these inputs) costs **≤ 0.5 on both** — one predictable branch — and if it costs more, `0022` C's canonicalization question is answered *no* on cost grounds. **Falsified if** either engine lands within noise of B3's 0.93/0.91 (then allocation is not the dominant term and the lane needs no design care), or if wasmtime beats V8 (the nursery reasoning is wrong). | **the lane is real but 5–15× cheaper than predicted, and the asymmetry is overstated.** B8k: V8 **1.377**, wasmtime **1.993** — against predicted 2–4 and 10–30. Both engines allocate-and-collect a dying two-word box for ~0.5–1.1 ns over B3; the "no nursery at 47" magnitude reasoning about wasmtime is falsified (the *direction* held: wasmtime is slower). Against the JVM's boxed 2.964 (B3, same run): **the boxed lane beats JVM boxed arithmetic on both engines** (0.46× and 0.67×). Mixed dispatch: **+0.04 on V8 (noise — free), +0.51 on wasmtime** — the V8 half of that prediction also wrong. Canonicalization probe: +0.00 V8, +0.19 wasmtime — held, so `0022` C's question is decided by semantics, not cost (`0025`). |
+| B8i | does a *real* slow path erase B3's win? B3's loop with the `unreachable` arm replaced by a real allocating boxed add, still untaken | **recorded 2026-07-30, before the run.** wasmtime: **no measurable change** from B3's 0.912 — nothing speculates, the untaken branch just sits there. V8: **0 to +30%** (0.927 → ≤ 1.2) if the now-reachable call inhibits inlining the hot loop. **This is `0022` C's falsifier for the fixnum split itself**: V8 at ≥ 3 ns (JVM parity) would erase B3's win and reopen the representation. | **confirmed — the split survives its falsifier.** V8 0.954 vs B3's 0.924, **+~3%, reproduced across two runs** (rerun: 0.945 vs 0.920, mins agree). On wasmtime the first run read +5% (0.961 vs 0.918) but a rerun **inverted the sign** (0.952 vs 0.965) — the difference is inside the ±0.05 run-to-run spread, so the honest statement is **indistinguishable**. A real, allocating, canonicalizing slow path costs the untaken fast path ~3% on V8 and nothing wasmtime can measure. |
 | — | V8 vs wasmtime on the same module | **V8 meaningfully faster on B1/B2** — it has speculative inlining; wasmtime has no adaptive tier | **confirmed on B1, by more than expected: 9.8×** (0.865 vs 8.434 ns/op). |
 
 If a prediction is wrong, the design note it came from gets amended and the
@@ -471,3 +473,61 @@ entirely.
 - **B5's fallback is the generic path, not a slow path that re-specialises.**
   A compiler that re-profiles would behave differently, and this project does
   not have one (`0003`: we do not write a JIT).
+
+## B8 — measured 2026-07-30. The boxed lane beats JVM boxing; the split survives.
+
+`bb bench-s0 B3 B8k B8b B8c B8i` · Darwin arm64 · Apple M4 Pro · wasmtime
+47.0.1 · wasm-opt 129 · wasm-tools 1.254.0 · node v24.18.0 · OpenJDK 25.0.3.
+n = 20 M, reps = 20; B3 rerun in the same invocation so the baseline shares
+the session. Values sit at 2^30 … 2^30 + n — outside i31, so the mixed
+dispatch always takes the boxed arm and the canonicalization probe never
+fires, while both stay real code.
+
+| | JVM | V8 | V8 -O3 | wasmtime | wasmtime -O3 |
+|---|---|---|---|---|---|
+| B3 — i31 fast path (baseline, rerun) | 2.964 | 0.924 | 0.924 | 0.918 | 0.952 |
+| B8k — known boxed: load+add+check+**alloc** | — | **1.377** | 1.247 | **1.993** | 1.900 |
+| B8b — + mixed dispatch on both operands | — | 1.416 | 1.372 | 2.499 | 1.887 |
+| B8c — + canonicalization probe (untaken) | — | 1.414 | 1.419 | 2.693 | 2.379 |
+| B8i — B3 with a real allocating slow path | — | 0.954 | 0.940 | 0.961 | 0.929 |
+
+**1. The boxed-i64 lane is cheaper than JVM boxed arithmetic on both
+engines** — 1.38 ns (0.46×) on V8, 1.99 ns (0.67×) on wasmtime, against the
+JVM's 2.96. fib's n = 46…92 domain, which runs entirely on this lane, does
+not need rescuing. The prediction had the lane 5–15× more expensive and
+wasmtime an order of magnitude behind V8; both magnitudes were wrong,
+though the direction (wasmtime slower) held.
+
+**2. Allocation is ~0.5–1.1 ns, not the dominant term the prediction
+assumed.** B8k minus B3 isolates load+alloc over tag-and-mask: +0.45 on V8,
++1.08 on wasmtime, for a dying one-field box collected an iteration later.
+
+**3. Mixed-representation dispatch is free on V8 (+0.04, noise) and +0.51
+on wasmtime.** The compiler can emit the two-representation test on both
+operands without design guilt.
+
+**4. The canonicalization probe costs nothing V8 can measure and +0.19 on
+wasmtime**, so whether a boxed value that fits i31 may exist is decided by
+semantics — `identical?`, `=`, hash — not by cost. `0025` decides it.
+
+**5. B8i is the number that mattered: a real slow path does not erase the
+fast path.** V8: +~3%, reproduced across two runs (0.954/0.945 vs
+0.924/0.920, mins agreeing). wasmtime: the first run's +5% **inverted its
+sign on a rerun** (0.952 vs 0.965) — inside the ±0.05 spread,
+indistinguishable, per the resolution standard B5's cell already set.
+`0022` C's falsifier for the fixnum split — "mixed-representation
+dispatch priced above what erases B3's win" — did not fire.
+
+**Threats to validity.**
+
+- **Every box here dies young.** The loop allocates one box per iteration
+  and drops it on the next — the friendliest possible GC load. A workload
+  whose boxes survive (collections of boxed longs) exercises the collector,
+  not the allocator, and is unmeasured. The number licenses fib's shape —
+  a dependency chain of dying intermediates — not boxed data at rest.
+- **The overflow-check arm is still `(unreachable)`** — the throw
+  representation is open (`0022` C), so what a *taken* overflow costs is
+  not measured, only the untaken check.
+- **B8b's raw-vs-O3 gap on wasmtime (2.499 → 1.887)** shows binaryen
+  rearranging the dispatch; per the standing rule both numbers are
+  reported and the raw one is quoted, since the dev loop runs raw.

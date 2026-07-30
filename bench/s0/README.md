@@ -17,6 +17,8 @@ first run. Do not read them until you have your own expectation.
 | **B3** | `b3_arith.wat` | `i31` fast-path add vs a boxed slow path | Whether boxed arithmetic can be cheap |
 | **B4** | `b4_cast.wat` | `ref.cast` by target depth *and* by input variety, against a no-cast floor | How to shape the type graph |
 | **B5/B5x/B7** | (in `b2_megamorphic.wat`) | guarded call-site specialisation, and the hit rate at which it starts paying | Whether the server lane is reachable at all |
+| **B6** | `b6_boundary.wat` | lowering a 4 KB aggregate across the component boundary, against `memory.copy` | What `0007`'s finding costs, and the representation lever (`0008`) |
+| **B8** | `b8_boxed.wat` | the boxed-i64 lane: allocation per op, mixed dispatch, canonicalization probe, and what a real slow path costs B3's fast path | The numeric representation past i31 (`0022` C, `0025`) |
 
 Each runs on **both** `node` (V8: speculative inlining) and `wasmtime`
 (no adaptive tier). Both numbers are reported; neither is "the" answer.
@@ -71,15 +73,13 @@ errors.
 
 ## Status
 
-**All six measured** — B1–B4 as contracted, plus B5 and B7, which B1's and B2's
-findings forced. Numbers, controls and what each means are in
-`doc/design/0002-measure-first.md`; the verdict is `doc/design/0010-*`.
+**All measured** — B1–B4 as contracted, B5 and B7 which B1's and B2's findings
+forced, B6 (the component boundary, measured 2026-07-30), and B8 (the
+boxed-i64 lane, S3's numeric-representation benchmark). Numbers, controls and
+what each means are in `doc/design/0002-measure-first.md`; the S0 verdict is
+`doc/design/0010-*`, the B8 decision `doc/design/0025-*`.
 
 B5 and B7 live inside `b2_megamorphic.wat` rather than their own files so that
 their type graph and rings are provably identical to the baselines they are
 compared against. That is deliberate: comparing across files is how three of
 this project's controls went wrong.
-
-**B6 — the component boundary crossing — is not written**, and is the one
-thing the project's own pitch rests on that nothing here measures. See
-`doc/status.md`.

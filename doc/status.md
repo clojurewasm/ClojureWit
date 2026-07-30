@@ -32,11 +32,18 @@ _Short by design, and printed at every session start — so findings live in
    dev-only redef entry carries `:modes [:dev]` (`0024` §10). The trap
    table has two exercised rows (division, stack exhaustion — depth
    bands re-measured for the real frame shape, pin at 3,000). Varargs
-   analyze but refuse to emit until seqs exist. Still open, each with
-   its benchmark named (`0022`): the dev-loop output format (before the
-   nREPL unit), the **boxed-i64 lane** (before the emitter grows past
-   i31 — fib's n = 46…92 domain), the throw representation. Next unit:
-   **the boxed-i64 benchmark**, predictions first (`0002`'s rule).
+   analyze but refuse to emit until seqs exist. **B8 is measured**
+   (predictions first, both recorded in `0002`; decision `0025`): the
+   boxed-i64 lane costs 1.38 ns/op on V8 and 1.99 on wasmtime against
+   JVM boxed 2.96 in the same run — fib's n = 46…92 domain needs no
+   rescue — the fixnum split survived its falsifier (a real slow path
+   costs B3's fast path +3–5%), and **fixnums are canonical** (a boxed
+   value fitting i31 must not exist; the probe measured free). Still
+   open: the dev-loop output format (before the nREPL unit) and the
+   throw representation (its check is priced, its taken arm is not).
+   Next unit: **the boxed lane in the emitter** — `$box` grows its
+   boxed arm, ops unbox both representations, literals beyond i31
+   compile — with its corpus entries in the same commit.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
