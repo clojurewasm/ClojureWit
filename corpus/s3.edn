@@ -27,6 +27,21 @@
  {:id "if-false"        :forms [(if false 1 2)]}
  {:id "if-zero-truthy"  :forms [(if 0 1 2)]}
  {:id "if-untaken-arm"  :forms [(if true 3 (quot 1 0))]}
+ {:id "loop-countdown"  :forms [(loop [i 10 acc 0]
+                                  (if (< 0 i) (recur (- i 1) (+ acc i)) acc))]}
+ {:id "loop-fib-iter"   :forms [(loop [n 10 a 0 b 1]
+                                  (if (< 0 n) (recur (- n 1) b (+ a b)) a))]}
+ ;; recur rebinds simultaneously: a sequential-assignment bug makes the
+ ;; swap collapse (a=b, then b=that same value) and this entry catch it.
+ {:id "loop-recur-simultaneous"
+  :forms [(loop [a 1 b 2 n 3]
+            (if (< 0 n) (recur b a (- n 1)) (- (* a 10) b)))]}
+ {:id "loop-nested"     :forms [(loop [i 3 total 0]
+                                  (if (< 0 i)
+                                    (recur (- i 1)
+                                           (+ total (loop [j i s 0]
+                                                      (if (< 0 j) (recur (- j 1) (+ s j)) s))))
+                                    total))]}
  {:id "let-shadow"      :forms [(let [x 1] (let [x (+ x 1)] (* x 10)))]}
  {:id "let-sequential"  :forms [(let [x 2 y (+ x 3)] (* x y))]}
  {:id "top-level-forms" :forms [(+ 1 1) (+ 2 2)]}

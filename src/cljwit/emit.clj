@@ -40,6 +40,37 @@
     :nil    "(ref.null eq)"
     (out-of-slice! (str "literal of type " type) ast)))
 
+(defn- emit-loop
+  "`0022` D: a block and a br. The loop's locals are set before entry;
+   `recur` re-enters via `br` to the loop label."
+  [ctx {:keys [bindings body loop-id]}]
+  (let [[ctx' sets]
+        (reduce (fn [[c acc] {:keys [name init]}]
+                  (let [wl (fresh-local! c)]
+                    [(assoc-in c [:locals name] wl)
+                     (conj acc (format "(local.set %s %s)" wl (emit-expr c init)))]))
+                [ctx []] bindings)
+        label (str "$loop" (swap! (:counter ctx) inc))
+        ctx'' (assoc-in ctx' [:loops loop-id]
+                        {:label label
+                         :locals (mapv #(get-in ctx' [:locals (:name %)]) bindings)})]
+    (format "(block (result (ref null eq)) %s (loop %s (result (ref null eq)) %s))"
+            (str/join " " sets) label (emit-expr ctx'' body))))
+
+(defn- emit-recur
+  "Rebinding is simultaneous: every argument is evaluated onto the value
+   stack under the *current* bindings, then popped into the loop locals in
+   reverse — a sequential `local.set` would let later arguments observe
+   earlier rebinds."
+  [ctx {:keys [exprs loop-id] :as ast}]
+  (let [{:keys [label locals]} (get-in ctx [:loops loop-id])]
+    (when-not label
+      (out-of-slice! "recur outside an enclosing loop (fn recur is a later unit)" ast))
+    (format "(block (result (ref null eq)) %s %s (br %s))"
+            (str/join " " (map #(emit-expr ctx %) exprs))
+            (str/join " " (map #(format "(local.set %s)" %) (reverse locals)))
+            label)))
+
 (defn- emit-let [ctx {:keys [bindings body]}]
   (let [[ctx' sets]
         (reduce (fn [[c acc] {:keys [name init]}]
@@ -100,6 +131,8 @@
                     (emit-expr ctx (:then ast))
                     (emit-expr ctx (:else ast)))
     :let    (emit-let ctx ast)
+    :loop   (emit-loop ctx ast)
+    :recur  (emit-recur ctx ast)
     :local  (if-let [wl (get-in ctx [:locals (:name ast)])]
               (format "(local.get %s)" wl)
               (out-of-slice! (str "unresolved local " (:name ast)) ast))
