@@ -17,7 +17,7 @@ _Short by design, and printed at every session start — so findings live in
    express today. What is left of `0012` is `map`, `list<T,N>`,
    `stream`/`future` and `error-context`, none of which are in a shipped
    release.
-2. **Host imports (`0017`).** The mechanism works — an FFM upcall stub reaches
+3. **Host imports (`0017`).** The mechanism works — an FFM upcall stub reaches
    Clojure from inside a component call (`bb spike-import`), pure Clojure, no C
    shim. The API is designed and argued, and an adversarial review changed four
    of its five decisions. Three findings that outlive the note: `add_wasip2`
@@ -26,10 +26,10 @@ _Short by design, and printed at every session start — so findings live in
    wasmtime **frees** what the callback writes, so `lower-fn`'s Arena
    allocation cannot be reused in that direction. Resource imports are inside
    this unit, not after it — every `wasi:io` interface needs one.
-3. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
+4. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
    cannot supply; `0015` declined to be the codegen layer that would, so the
    contract has to shrink instead.
-4. **`require`-a-component is deferred, not pending** (`0015`). When it is
+5. **`require`-a-component is deferred, not pending** (`0015`). When it is
    picked up it should be a generated `.clj`, not a macro, and the instance
    should not be ambient.
 

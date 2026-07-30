@@ -53,6 +53,15 @@ spike-c-cost`, `bb spike-cost`, and `cargo run --release` in
   seven parameters, five pointers — costs 17.4 ns through the same proxy
   binding (`bb spike-ffm-shape`), so ~17 ns of that is FFM and the rest is the
   result read.
+- **`cljwit.host` roughly doubles it again.** The 392.8 ns is the spike's:
+  a proxy-bound handle, one `wasmtime_component_func_call`, nothing else. The
+  library measures **807.7 ns** for `add(17, 25)` — it binds through
+  `invokeWithArguments` rather than an interface proxy, runs a compiled
+  marshaller per argument, takes the non-concurrency CAS, and opens a confined
+  arena per call. So **the library adds ~415 ns, more than the Component Model
+  charges.** Recorded rather than optimised: `0011` measured the proxy at 7 ns
+  against `invokeWithArguments`' 396, so the binding is the obvious first
+  suspect and the obvious first thing to try.
 - **The Component Model costs 4.8×** — 74.1 → 352.9 measured entirely within C,
   so it is not a cross-lane artifact and not the JVM's. It is about **79%** of a
   component call. The JVM's 392.8 sits ~40 ns above C's 352.9, which is the same
