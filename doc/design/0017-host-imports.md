@@ -1,8 +1,10 @@
 # 0017 — Host imports: letting a component call Clojure
 
-**Status:** proposed · 2026-07-30 · rewritten after an adversarial review ran
-every claim. Four of the first draft's five decisions changed, one of them
-because the draft would have aborted the JVM.
+**Status:** accepted · 2026-07-30 · rewritten after an adversarial review ran
+every claim — four of the first draft's five decisions changed, one of them
+because the draft would have aborted the JVM. A–F are implemented in
+`src/cljwit/host.clj` and tested (`test/cljwit/host_test.clj`); resource
+imports landed via `0018`.
 
 ## The question
 

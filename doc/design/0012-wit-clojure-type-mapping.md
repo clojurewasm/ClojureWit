@@ -59,8 +59,21 @@ in WASI 0.2, 🔀 in WASI 0.3, and 🗺️ 🔧 📝 are **in no shipped release
 **`result` in return position also gets a throwing wrapper.** `(f args)`
 returns the ok payload and throws on error; `(f* args)` returns the tagged
 value. Two vars per function, generated together. The throw carries the lifted
-`E` in `ex-data` under `:wit/error` along with the WIT type name, so `catch`
-can dispatch on the payload even though the class is always `ExceptionInfo`.
+`E` in `ex-data` under `:wit/error`, so `catch` can dispatch on the payload
+even though the class is always `ExceptionInfo`.
+
+**Amended 2026-07-30: the contract shrank — no WIT type name.** The first
+draft promised the declared type name (`error-code`) alongside the payload.
+Nothing can supply it: the pinned wasmtime 47.0.1 type-reflection API exposes
+member names — record fields, variant cases, enum and flags names — but no
+function returns the *declared name* of a valtype (verified against every
+`wasmtime_component_*type*` symbol in the pinned headers, 2026-07-30), and
+`0015` declined to be the codegen layer that would read it out of the WIT
+text. What remains is enough to dispatch on: `0012`'s own finding is that the
+lifted payload is self-describing — an `enum` error is a keyword, a `variant`
+error a `[:tag payload]`, a `record` error a map keyed by field. A codegen
+layer that reads WIT text may *add* the name later; the base contract must not
+promise what reflection cannot see.
 
 Everywhere else — parameters, record fields, list elements, variant payloads —
 `result` is the tagged value and nothing throws.

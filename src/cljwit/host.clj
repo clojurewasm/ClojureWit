@@ -588,31 +588,32 @@
          ^java.lang.foreign.MemorySegment args ^long nargs
          ^java.lang.foreign.MemorySegment res ^long nres]))
 
-;; Slice one of 0017: scalars only. Anything wasmtime would have to *free* --
-;; a string, a list, a boxed option -- needs `lower-fn` to allocate with
-;; `malloc` rather than from an Arena (0017 C), which is not built yet. Refusing
-;; at instantiate with the kind named beats a wrong answer or a corrupt heap.
-(def ^:private SCALAR
-  #{:bool :s8 :u8 :s16 :u16 :s32 :u32 :s64 :u64 :f32 :f64 :char :string})
-
 (defn- unimportable
-  "Kinds the import direction cannot marshal yet. `option`, `result` and
-   `variant` box their payload behind a pointer, which needs
-   `wasmtime_component_val_new` rather than a byte allocator (`0017` C)."
-  [tree]
-  (cond
-    (nil? tree) nil
-    (keyword? tree) (when-not (or (SCALAR tree) (#{:own :borrow} tree)) [tree])
-    :else (case (:kind tree)
-            :list (unimportable (:element tree))
-            :tuple (mapcat unimportable (:types tree))
-            :record (mapcat (fn [[_ t]] (unimportable t)) (:fields tree))
-            :enum nil
-            :flags nil
-            :option (unimportable (:ty tree))
-            :result (concat (unimportable (:ok tree)) (unimportable (:err tree)))
-            :variant (mapcat (fn [[_ t]] (unimportable t)) (:cases tree))
-            [(:kind tree)])))
+  "What the import direction refuses beyond `unsupported`: a resource below
+   the top level of a parameter or result. `import-stub` routes a *whole*
+   resource parameter or result through the instance's rep table; one nested
+   in a container would fall through to the guest-handle path and fail at
+   call time, so it is refused at instantiate instead, as `:nested-resource`."
+  ([tree] (unimportable tree true))
+  ([tree top?]
+   (cond
+     (nil? tree) nil
+     (keyword? tree)
+     (cond
+       (#{:own :borrow} tree) (when-not top? [:nested-resource])
+       (contains? VAL-KIND tree) nil
+       :else [tree])
+     :else (case (:kind tree)
+             :list (unimportable (:element tree) false)
+             :tuple (mapcat #(unimportable % false) (:types tree))
+             :record (mapcat (fn [[_ t]] (unimportable t false)) (:fields tree))
+             :enum nil
+             :flags nil
+             :option (unimportable (:ty tree) false)
+             :result (concat (unimportable (:ok tree) false)
+                             (unimportable (:err tree) false))
+             :variant (mapcat (fn [[_ t]] (unimportable t false)) (:cases tree))
+             [(:kind tree)]))))
 
 (defn- import-stub
   "One FFM upcall stub for one host import. Lifts the arguments, calls `f`,

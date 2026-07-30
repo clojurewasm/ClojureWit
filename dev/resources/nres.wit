@@ -1,0 +1,13 @@
+// A resource *nested in a container* in an import's signature. The import
+// direction routes only a whole parameter or result through the rep table
+// (`0017`), so this shape must be refused at instantiate, not fail at call
+// time.
+package local:nres@0.1.0;
+interface host {
+  resource token { }
+  poof: func(ts: list<token>) -> u32;
+}
+world w {
+  import host;
+  export run: func(v: u32) -> u32;
+}

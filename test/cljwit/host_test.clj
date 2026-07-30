@@ -613,3 +613,22 @@
                                                   "local:hres/host@0.1.0#peek" (fn [_] 0)}})))]
                 (is (= :no-such-resource (:cljwit/error (ex-data ex))))))))
         (finally (.delete ^File f))))))
+
+(deftest nested-resource-import-is-refused
+  ;; `import-stub` routes a *whole* resource parameter or result through the
+  ;; rep table; one nested in a container would fall through to the
+  ;; guest-handle path and NPE at call time. So `list<own<token>>` in an
+  ;; import's signature must be refused at instantiate, with the kind named.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping nested-resource test")
+    (let [f (build-component! "nres")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+            (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                                  (host/instantiate
+                                   a {:imports {"local:nres/host@0.1.0#poof"
+                                                (fn [ts] (count ts))}})))]
+              (is (= :unsupported-type (:cljwit/error (ex-data ex))))
+              (is (= [:nested-resource] (:cljwit/kinds (ex-data ex)))))))
+        (finally (.delete ^File f))))))
