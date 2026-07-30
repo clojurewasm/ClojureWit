@@ -3,7 +3,7 @@
 _Short by design, and printed at every session start — so findings live in
 `doc/design/`, plans in `doc/roadmap.md`, and only the present tense here._
 
-**Updated:** 2026-07-30 · **Phase:** S1 closed, entering S2 (pre-alpha, no compiler)
+**Updated:** 2026-07-30 · **Phase:** S1 closed, S2 half-built, S3 entered (pre-alpha, no compiler yet)
 
 ## Next
 
@@ -18,15 +18,19 @@ _Short by design, and printed at every session start — so findings live in
    reports tiered drift (`:stale`/`:modified`/`:missing`/`:orphans`), and
    `check` is the CI verb. What remains of S2 — the nREPL entry point and
    the watcher — waits for a compiler to serve, so:
-3. **S3 is entered** (`0022`, proposed): WAT-text emission through the
-   pinned toolchain, a CI-mandatory differential oracle against `clojure`
-   itself, i31-fixnum numerics with a throwing boxed i64, and — the survey
-   ran same-day — **tools.analyzer core plus our own host layer** as the
-   front end, with clojure.core's macros reused directly (`:inline` off, a
-   two-entry leak table, host ops as free leak detectors).
-   `bb spike-analyzer` is the executable half. Next unit: fold the in-flight
-   adversarial review of `0022`, then the first vertical slice — corpus
-   harness + `(def x 42)` through analyze → emit → both engines.
+3. **S3 is entered** (`0022`, proposed, rewritten twice on day one).
+   Decided: prod emission as WAT text through the pinned toolchain; the
+   differential-oracle contract (isolation rule, trap↔class table,
+   comparison holes named); the numeric *fast path* (i31) and semantic
+   baseline (`+` throws, `+'` promotes; `identical?` divergence numbered);
+   **tools.analyzer core plus our own host layer** as the front end
+   (`bb spike-analyzer` is the executable half). Open, each with its
+   benchmark named: the dev-loop output format (`0009`'s precondition —
+   ~23 ms/spawn measured, candidates listed), the boxed-i64 lane (fib's
+   n = 46…92 runs entirely on it, never measured), the throw
+   representation. Next unit: the first vertical slice — corpus harness +
+   scalar entries through analyze → emit → both engines — which forces
+   none of the open decisions.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
@@ -124,8 +128,8 @@ dominates the copy.
 **S1's premise is verified end to end** (`0011`): `bb spike-host` builds a
 component and calls it from the JVM through FFM — engine, store, component,
 linker, instantiate, export lookup, call — returning 42. The flake now exports
-`CLJWIT_WASMTIME_LIB` so no committed file carries a machine-specific path;
-how a *shipped* library finds the shared object is still open.
+`CLJWIT_WASMTIME_LIB` so no committed file carries a machine-specific path,
+and `0019` settled how a shipped library finds the shared object without it.
 
 Behind that (`0005`, surveyed 2026-07-30): wasmtime's C API
 gained the component model between v40 and v43 — 0 exported
@@ -223,6 +227,15 @@ changed something; this is the index.
 - **A design note asserted a mechanism that does not exist.** `0018`'s first
   draft called it measured that a reflected valtype compares equal to a
   host-registered resource type. It compares 0. Deferred, then rewritten.
+- **A delegated research brief's quotation went into a design note
+  unverified.** `0022`'s first draft carried a direct "quote" of j2wasm's
+  docs that the cited page does not contain, a wrong-file attribution, and
+  an unfindable "recorded anti-pattern" claim — three of six citation
+  spot-checks failed in adversarial review. The same family as the
+  truncated-view incidents: a summary read as the source. Corrected in
+  `0022`'s second rewrite; the rule was already on the books ("re-verified
+  before it is built on again") and did not prevent it — the independent
+  reviewer did, again.
 
 **Five of the fifteen are one failure**: generalising from an experiment that
 varied more than one thing. **Three more are its sibling** — reading a

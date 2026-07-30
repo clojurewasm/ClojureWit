@@ -1,12 +1,13 @@
 # 0022 — S3 opens: the compiler's shape, and the one decision it defers
 
-**Status:** proposed · 2026-07-30 · the entry survey for S3, run against the
-sibling projects' recorded failures, the ClojureScript compiler's source, and
-the toolchain as it exists today. The first draft made three decisions and
-deferred the analyzer to a survey; the survey ran the same day (E, amended)
-and decided it — tools.analyzer core plus our own host layer, validated by
-`bb spike-analyzer`. An adversarial review of the whole note is in flight;
-`proposed` until it lands.
+**Status:** proposed · 2026-07-30 · rewritten twice the day it was written.
+The first draft made three decisions and deferred the analyzer; the survey
+ran the same day and decided it (E — tools.analyzer core plus our own host
+layer, `bb spike-analyzer`). Then an adversarial review ran every claim:
+three of six citation spot-checks failed (recorded as an incident), A's
+dev-loop half was reopened for violating `0009`'s own precondition, and C's
+headline was retracted — only the fast path was ever measured. What stands
+and what is open are marked per section.
 
 ## The question
 
@@ -18,68 +19,130 @@ before verifying?
 
 ## The decision
 
-### A. Emit WAT text; assemble and optimize with the pinned toolchain
+### A. Prod/batch emission is WAT text; the dev loop's format is **open**
 
-The compiler prints WAT; `wasm-tools parse` assembles, `wasm-opt` optimizes
-(prod only, per `0009`). Three pieces of evidence, all checked 2026-07-30:
+**What stands:** for batch builds the compiler prints WAT; `wasm-tools
+parse` assembles, `wasm-opt` optimizes (prod only, per `0009`). Evidence:
 
 - This repo's whole measured pipeline already is exactly that
   (`bench/s0/run.clj`, the `wat` skill) — S3 inherits validated
-  infrastructure, including the GC/tail-call flag gotchas.
-- **J2CL/j2wasm — a JVM-hosted compiler with the same constraints — "emits
-  naïve Wasm using the text format and relies on the Binaryen toolchain"**
-  (<https://github.com/google/j2cl/blob/master/docs/getting-started-j2wasm.md>).
-- clj.wasm — the prior attempt at this exact project — died building its own
-  assembler from the spec grammar (`.ref/clj.wasm/chronology.md`: "the spec
-  document is more rendering centric than I hoped"). Never own the assembler.
+  infrastructure, including the GC/tail-call flag gotchas. That evidence is
+  for **batch** builds — the driver memoizes across a build — and licenses
+  nothing about the per-form loop.
+- J2CL/j2wasm, a JVM-hosted compiler under the same constraints, routes a
+  `.wat` output into binaryen in its build rule
+  (`build_defs/internal_do_not_use/j2wasm_application.bzl` in
+  <https://github.com/google/j2cl>, checked 2026-07-30). *(The first draft
+  carried a direct "quotation" of j2wasm's docs that its cited page does
+  not contain — caught by review; see the incident.)*
+- clj.wasm — the prior attempt at this exact question — **stopped** at
+  building a spec-derived assembler (`.ref/clj.wasm/plan.md:15`: "the spec
+  document is more rendering centric than I hoped"; last commits
+  2024-12-09 say the extractor "works on all files", then nothing). One
+  paused side project is weak evidence, but the direction is the same:
+  never own the assembler.
 
-No off-the-shelf JVM WasmGC-emission library was found (searched
-2026-07-30); every WasmGC producer owns its writer or emits text. Binaryen's
-own lowering guidance shapes the emitter: more types rather than fewer
-(`--type-merging` cleans up), maximally refined and immutable fields,
+Binaryen's lowering guidance shapes the emitter: more types rather than
+fewer (`--type-merging` cleans up), maximally refined and immutable fields,
 vtables as immutable globals — with immutability a **prod-mode** property,
 since dev-mode var globals are mutable by design (`0009`)
 (<https://github.com/WebAssembly/binaryen/wiki/GC-Implementation---Lowering-Tips>).
 
-**Unmeasured and flagged:** dev-mode REPL latency of a JVM →
-`wasm-tools parse` process spawn per form. Benchmark before the nREPL unit
-assumes it is fine.
+**What is open — reopened by review: the dev loop.** `0009` (accepted)
+closes with the dev-mode cost benchmark belonging **before S3 commits to an
+output format**, and the first draft deferred exactly that. The review ran
+the three-minute half: `wasm-tools parse` on a real S0 module is **~23 ms
+median per spawn** (12–51 ms, 20 reps, Darwin arm64), `wasmtime` spawn+run
+another ~22 ms. Fine per keystroke; multiplied where forms multiply — a
+300-form namespace `require` through a per-form dev loop is ~7 s of
+assembler spawns alone, and B's corpus lane would add ~1 min to the gate.
+The candidates the decision must weigh, none yet examined: assembling
+**near the engine** (binaryen.js/wabt.js on the node/browser side — V8
+cannot instantiate text anyway, so something assembles there regardless), a
+**persistent assembler process**, batching forms per flush, and **TeaVM's
+WasmGC binary writer** (JVM-hosted, Apache-2.0, named in E — the first
+draft's "no off-the-shelf JVM WasmGC-emission library" overclaimed against
+its own section E). The dev-loop format is decided by that benchmark,
+before the nREPL unit, not here.
 
 ### B. The differential oracle is CI-mandatory from the first special form
 
 Semantics claims are checked against `clojure` itself — the standing rule,
 mechanized:
 
-1. A committed **corpus** of source forms; every special form lands with its
-   corpus lines in the same commit, and any "X works" claim leaves its
-   probing expression behind. (ClojureWasm discharged a debt row once by
-   listing functions that were not done — `.ref/ClojureWasm/.dev/`; the
-   corpus is the countermeasure.)
-2. The oracle lane runs the corpus through real `clojure`, **batched in one
-   JVM** (per-form spawning is the sibling's recorded anti-pattern),
-   printing `pr-str` results or error *classes*.
+1. A committed **corpus** of source forms; every special form lands with
+   its corpus lines in the same commit, and any "X works" claim leaves its
+   probing expression behind. **This clause is the load-bearing one**: the
+   sibling's drift recurred *even after* its oracle became CI-mandatory,
+   because coverage lagged — 9 of 24 node kinds compared
+   (`.ref/ClojureWasm/.dev/decisions/0005`, `0036`). Mandatory-ness alone
+   saved nothing; same-commit coverage is what does.
+2. The oracle lane runs the corpus through real `clojure` in one JVM,
+   **with a stated isolation rule**: each entry evaluates in a fresh
+   namespace, and cross-entry effects are banned by a corpus lint — a
+   `def` leaking from entry N into N+1 would make the oracle resolve what
+   the per-entry compiled lanes cannot, and the diff would blame the
+   compiler.
 3. Compiled lanes run on **both wasmtime and node, in both modes** (dev
-   open-world and prod direct-linked) from day one. ClojureWasm made the
-   comparison opt-in and it "consumed weeks" of silent drift
-   (`.ref/ClojureWasm/.dev/decisions/0005`, `0036`); mode divergence is the
-   same bug class. Early corpus entries are scalar-returning
-   (`wasmtime run --invoke`, exactly `bench/s0`'s mechanism, whose driver
-   already fails on wrong answers); printing arbitrary values is itself
-   corpus-gated later.
-4. Values compare **structurally** (read back with `clojure.edn`) — never
-   string-compare set/map printing; errors compare by class. Every diff is
-   classified: a bug, or a numbered divergence with a pinned test.
+   open-world and prod direct-linked) from day one; mode divergence is the
+   same bug class as backend divergence. Day-one entries are
+   scalar-returning (`wasmtime run --invoke`, exactly `bench/s0`'s
+   mechanism, whose driver already fails on wrong answers); an entry whose
+   expected value is not a scalar — D's varargs probe returns `((2 3))` —
+   **enters the corpus the day printing does**, and until then D's claims
+   about it are marked untested. (The first draft demanded both
+   scalar-only day one and that entry on day one; a review caught the
+   contradiction.)
+4. Values compare **structurally** (read back with `clojure.edn`), with
+   the holes named in the contract rather than discovered: a fn-valued
+   result prints as `#object[…]` and **crashes** `clojure.edn/read-string`
+   — such entries are corpus-lint errors until a representation exists —
+   and NaN fails `=` even against itself, so float comparisons go through
+   bit patterns (`0012` already records the same rule for the WIT
+   boundary). Set/map print order is never string-compared.
+5. Errors compare through a **trap↔class mapping table, a numbered
+   artifact from the first corpus entry**: a wasm trap has no exception
+   class, so `(/ 1 0)` — `ArithmeticException` on the JVM, a bare division
+   trap or thrown exnref on the wasm side — is only comparable once the
+   table says so. Its first rows: `ArithmeticException`, and stack
+   exhaustion (see D's depth bands). Every diff is classified: a bug, or
+   a numbered divergence with a pinned test.
 
 ### C. Numerics: fixnum i31, a boxed i64 that throws, and `+` is not `+'`
 
 fib's semantic baseline: Clojure longs. `+` **throws** on 64-bit overflow —
-only `+'` promotes — which the sibling learned the hard way
-(`.ref/ClojureWasm/docs/clojure_vs_clojurewasm.md`). The representation is
-the measured one: i31 fixnums (B3: boxed arithmetic at 0.31× JVM on both
-engines, overflow check free — `0002`), overflowing into a boxed i64 whose
-own overflow throws. Promotion to bigints is `+'`'s job and out of S3 scope.
-Unboxed i64 emission is a prod-mode optimisation for proven types, not the
-baseline.
+only `+'` promotes — verified by execution in this repo's `clojure`, and
+the sibling learned it the hard way
+(`.ref/ClojureWasm/docs/clojure_vs_clojurewasm.md`).
+
+**The fast path is the measured one — and only it.** The first draft said
+"the representation is the measured one"; a review read the benchmark:
+B3's slow path is literally `(unreachable)` (`bench/s0/b3_arith.wat:25`),
+its "boxed" type is a two-i32 struct, and its overflow branch never fires
+at B3's inputs. What B3 licenses is i31 fixnums at 0.31× JVM with a
+perfectly-predicted untaken guard. The boxed-i64 lane — allocation per
+overflow-lane add, mixed-representation dispatch on both operands, the
+i64 overflow check, the throw — is **unmeasured**, and it is not a
+corner: fib's values leave i31 at fib(46), so the stop-condition
+program's input domain n = 46…92 runs entirely on it. Per `0002`:
+predictions in writing, then the benchmark, **before the numeric
+emitter**.
+
+Three decisions this forces, none made here:
+
+- **Canonicalization** — may a boxed value that fits i31 exist? Either
+  answer changes `=`, `hash`, and every numeric guard's cost model.
+- **The throw representation** — a WasmGC exception with what tag,
+  caught how, compared by B's trap table how. An output-format decision
+  in `0009`'s non-retrofittable sense; its own note, before the emitter.
+- **Divergence #1, numbered here**: i31 makes every small integer
+  `identical?`-true, where the JVM's Long cache stops at 127 (measured:
+  `(identical? 128 128)` is false in this repo's `clojure`). Semantics
+  are not negotiable *unremarked*; this is the remark, and the corpus
+  pins it.
+
+Promotion to bigints is `+'`'s job and out of S3 scope. Unboxed i64
+emission is a prod-mode optimisation for proven types, not the baseline.
 
 ### D. The S3 forms, on the measured substrate
 
@@ -102,13 +165,20 @@ baseline.
   box vs i31 encoding) is an emitter decision the first corpus entry pins.
 - **`let`** — Wasm locals; captured ones become closure fields, which makes
   closure conversion an analysis pass.
-- **`loop`/`recur`** — a block and a `br`; no tail-call feature needed.
-  Non-self tail calls (`return_call`) are out of S3 scope, but the analyzer
-  marks tail position from the start — cljs's `:context :return` is not a
-  real tail-position analysis, and a `call` where `return_call` was needed
-  fails only at depth (the structural-defect class
-  `.ref/ClojureWasm/.dev/lessons/structural_defect_hunting.md` names: run
-  everything at large n).
+- **`loop`/`recur`** — a block and a `br`; no tail-call feature in S3,
+  **and the honest reason is parity, not absence of need**: JVM Clojure
+  has no TCO either (measured: plain self-recursion survives 10⁴ frames
+  and dies at 10⁶). But the lanes die at different depths — measured on a
+  minimal recursive function: wasmtime traps between 30k and 40k frames,
+  V8 throws `RangeError` between 10k and 20k, the JVM sits an order of
+  magnitude higher — and real compiled frames will be fatter. So the
+  corpus rule this forces: depth-sensitive entries pin a depth **below
+  the shallowest lane's band**, and stack exhaustion is a row in B's trap
+  table. "Run everything at large n" (the sibling's structural-defect
+  lesson) still holds for everything *else*. Tail-position marking lands
+  **with its consumer** (`return_call`, post-S3) — the first draft
+  claimed it "from the start", which was a claim with no probing
+  expression.
 - **Calls** — generic three-loads-plus-`call_ref`; specialisation only above
   the measured crossover, conservative 80% threshold by default, per-lane
   builds an open S3 decision (`0010`). The coverage report is a
@@ -213,9 +283,11 @@ both, run the spike, decide. Deciding on a recalled API would have been
 
 ## What would falsify this
 
-- The JVM→`wasm-tools` per-form latency making WAT-text emission untenable
-  for the REPL loop — measured before the nREPL unit, and binary emission
-  is the recorded exit.
+- The dev-loop benchmark (A) landing where no candidate is acceptable —
+  would reopen prod emission too, since the two should share an emitter
+  core.
+- The boxed-lane benchmark (C) pricing mixed-representation dispatch above
+  what erases B3's win — would reopen the fixnum split itself.
 - The tools.analyzer read (E's survey) contradicting the recalled API — the
   amendment records whichever way it lands.
 - A corpus entry where structural comparison cannot express the contract
