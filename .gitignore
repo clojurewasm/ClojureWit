@@ -19,3 +19,6 @@ dev/spike/rust_call_cost/target/
 # That has happened twice: a null export index passed to get_func, and a
 # recursive walk sharing its out-parameters.
 hs_err_pid*.log
+
+# npm (dev-loop assembler, doc/design/0026)
+node_modules/

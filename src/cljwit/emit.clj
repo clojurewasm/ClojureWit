@@ -94,19 +94,24 @@
             (str/join " " sets) label (emit-expr ctx'' body))))
 
 (defn- emit-recur
-  "Rebinding is simultaneous: every argument is evaluated onto the value
-   stack under the *current* bindings, then popped into the loop locals in
-   reverse — a sequential `local.set` would let later arguments observe
-   earlier rebinds. A fn method's params register under its `:loop-id`,
-   so `recur` to the method head comes through here too (`0024`)."
+  "Rebinding is simultaneous: every argument is evaluated into a fresh
+   temporary under the *current* bindings, then the temporaries copy into
+   the loop locals — a sequential `local.set` would let later arguments
+   observe earlier rebinds. Explicit temporaries rather than the value
+   stack: bare stacky `local.set`s make binaryen's parser materialize
+   anyref scratch locals and lose the eq refinement (`0026`, found by
+   the all-corpus binaryen.js differential). A fn method's params
+   register under its `:loop-id`, so `recur` to the method head comes
+   through here too (`0024`)."
   [ctx {:keys [exprs loop-id] :as ast}]
   (let [{:keys [label locals]} (get-in ctx [:loops loop-id])]
     (when-not label
       (out-of-slice! "recur outside an enclosing loop or fn method" ast))
-    (format "(block (result (ref null eq)) %s %s (br %s))"
-            (str/join " " (map #(emit-expr ctx %) exprs))
-            (str/join " " (map #(format "(local.set %s)" %) (reverse locals)))
-            label)))
+    (let [temps (mapv (fn [_] (fresh-local! ctx)) exprs)]
+      (format "(block (result (ref null eq)) %s %s (br %s))"
+              (str/join " " (map #(format "(local.set %s %s)" %1 (emit-expr ctx %2)) temps exprs))
+              (str/join " " (map #(format "(local.set %s (local.get %s))" %1 %2) locals temps))
+              label))))
 
 (defn- emit-let [ctx {:keys [bindings body]}]
   (let [[ctx' sets]

@@ -63,7 +63,9 @@ cannot instantiate text anyway, so something assembles there regardless), a
 WasmGC binary writer** (JVM-hosted, Apache-2.0, named in E — the first
 draft's "no off-the-shelf JVM WasmGC-emission library" overclaimed against
 its own section E). The dev-loop format is decided by that benchmark,
-before the nREPL unit, not here.
+before the nREPL unit, not here. *(Decided 2026-07-30: `0026` — WAT text
+in both modes, assembled next to the engine by binaryen.js at 1.28 ms per
+form; wabt.js measured unable to parse rec groups.)*
 
 ### B. The differential oracle is CI-mandatory from the first special form
 

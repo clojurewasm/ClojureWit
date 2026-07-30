@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "npm manifest for the dev-loop assembler only (doc/design/0026). `npm install`, then `node corpus/devloop_differential.mjs`. The version pin moves into tools.json when the dev lane enters the gate.",
+  "devDependencies": {
+    "binaryen": "131.0.0"
+  }
+}
