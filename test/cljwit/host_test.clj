@@ -160,6 +160,33 @@
                                  (host/exports i)))))))))
         (finally (.delete ^File c))))))
 
+(deftest reflection-cleanup-survives-repetition
+  ;; type_delete, item_delete and resource_type_delete are required by the
+  ;; pinned headers and fire on every reflection. The val_delete incident
+  ;; (0014 E) surfaced on the *second* call, so this loops well past it.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping cleanup-repetition test")
+    (let [c (build-component!)
+          f (build-component! "hres")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file c))]
+            (dotimes [_ 50] (host/describe a))
+            (dotimes [_ 50] (.close ^java.lang.AutoCloseable (host/instantiate a)))
+            (is (= {:params [["v" :string]] :result :string}
+                   (get (host/describe a) "echo-string"))
+                "reflection still answers after the churn"))
+          (with-open [a2 (host/compile e (io/file f))]
+            (dotimes [_ 20]
+              (.close ^java.lang.AutoCloseable
+               (host/instantiate
+                a2 {:resources {"local:hres/host@0.1.0#token" {:drop identity}}
+                    :imports {"local:hres/host@0.1.0#mint" (fn [v] {:n v})
+                              "local:hres/host@0.1.0#peek" (fn [t] (:n t))
+                              "local:hres/host@0.1.0#eat" (fn [t] (:n @t))}})))
+            (is true "20 resource-defining instantiates deleted their types")))
+        (finally (.delete ^File c) (.delete ^File f))))))
+
 (deftest lifetimes-are-explicit
   (if-not lib
     (println "CLJWIT_WASMTIME_LIB unset — skipping host lifetime test")

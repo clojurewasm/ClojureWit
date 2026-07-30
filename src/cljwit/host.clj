@@ -225,6 +225,7 @@
      :rty-new-host  (b "wasmtime_component_resource_type_new_host" ADDR I32)
      :rty-equal     (b "wasmtime_component_resource_type_equal" ValueLayout/JAVA_BOOLEAN ADDR ADDR)
      :rty-clone     (b "wasmtime_component_resource_type_clone" ADDR ADDR)
+     :rty-delete    (b "wasmtime_component_resource_type_delete" nil ADDR)
      :hres-new      (b "wasmtime_component_resource_host_new" ADDR ValueLayout/JAVA_BOOLEAN I32 I32)
      :hres-rep      (b "wasmtime_component_resource_host_rep" I32 ADDR)
      :hres-delete   (b "wasmtime_component_resource_host_delete" nil ADDR)
@@ -988,16 +989,21 @@
                             (when (invoke nth-f ty (.-ptr e) (long i) pp lp item)
                               (let [nm (read-name pp lp)
                                     k  (item-kind item)
-                                    of (.get item ADDR (long ITEM-OF))]
-                                (cond
-                                  (= ITEM-FUNC k)
-                                  [{:key  (if prefix (str prefix "#" nm) nm)
-                                    :path (if prefix [prefix nm] [nm])
-                                    :sig  (reflect-func api arena of)}]
+                                    of (.get item ADDR (long ITEM-OF))
+                                    r  (cond
+                                         (= ITEM-FUNC k)
+                                         [{:key  (if prefix (str prefix "#" nm) nm)
+                                           :path (if prefix [prefix nm] [nm])
+                                           :sig  (reflect-func api arena of)}]
 
-                                  ;; One level: WIT does not nest interfaces.
-                                  (and (= ITEM-IFACE k) (nil? prefix))
-                                  (walk of (:iface-nth api) (:iface-count api) nm)))))]
+                                         ;; One level: WIT does not nest interfaces.
+                                         (and (= ITEM-IFACE k) (nil? prefix))
+                                         (walk of (:iface-nth api) (:iface-count api) nm))]
+                                ;; Every _nth-filled item owns its union pointer
+                                ;; and "must be deallocated" (types/component.h)
+                                ;; — after `of` has been fully consumed above.
+                                (invoke (:item-delete api) item)
+                                r)))]
                  (into [] (comp (keep one) cat)
                        (range (invoke count-f ty (.-ptr e))))))]
     (walk ct (:export-nth api) (:export-count api) nil)))
@@ -1014,20 +1020,25 @@
                    (when (invoke (:import-nth api) ct (.-ptr e) (long i) pp lp item)
                      (let [nm (read-name pp lp)
                            k  (kind)
-                           of (.get item ADDR (long ITEM-OF))]
-                       (cond
-                         (= ITEM-FUNC k) [[nm (reflect-func api arena of)]]
-                         (= ITEM-IFACE k)
-                         (let [[ip il] (name-pair arena)
-                               sub ^MemorySegment (.allocate arena (long ITEM))]
-                           (into []
-                                 (keep (fn [j]
-                                         (when (invoke (:iface-nth api) of (.-ptr e) (long j) ip il sub)
-                                           (when (= ITEM-FUNC (bit-and (long (.get sub I8 (long 0))) 0xFF))
-                                             [(str nm "#" (read-name ip il))
-                                              (reflect-func api arena (.get sub ADDR (long ITEM-OF)))]))))
-                                 (range (invoke (:iface-count api) of (.-ptr e)))))
-                         :else nil)))))
+                           of (.get item ADDR (long ITEM-OF))
+                           r  (cond
+                                (= ITEM-FUNC k) [[nm (reflect-func api arena of)]]
+                                (= ITEM-IFACE k)
+                                (let [[ip il] (name-pair arena)
+                                      sub ^MemorySegment (.allocate arena (long ITEM))]
+                                  (into []
+                                        (keep (fn [j]
+                                                (when (invoke (:iface-nth api) of (.-ptr e) (long j) ip il sub)
+                                                  (let [f? (= ITEM-FUNC (bit-and (long (.get sub I8 (long 0))) 0xFF))
+                                                        r  (when f?
+                                                             [(str nm "#" (read-name ip il))
+                                                              (reflect-func api arena (.get sub ADDR (long ITEM-OF)))])]
+                                                    (invoke (:item-delete api) sub)
+                                                    r))))
+                                        (range (invoke (:iface-count api) of (.-ptr e)))))
+                                :else nil)]
+                       (invoke (:item-delete api) item)
+                       r))))
            cat)
           (range (invoke (:import-count api) ct (.-ptr e))))))
 
@@ -1054,18 +1065,24 @@
                     (comp
                      (keep (fn [i]
                              (when (invoke (:import-nth api) ct (.-ptr e) (long i) pp lp item)
-                               (let [nm (read-name pp lp)]
-                                 (when (= ITEM-IFACE (bit-and (long (.get item I8 (long 0))) 0xFF))
-                                   (let [of (.get item ADDR (long ITEM-OF))
-                                         [ip il] (name-pair arena)
-                                         sub ^MemorySegment (.allocate arena (long ITEM))]
-                                     (into []
-                                           (keep (fn [j]
-                                                   (when (invoke (:iface-nth api) of (.-ptr e) (long j) ip il sub)
-                                                     (when (= ITEM-RESOURCE (bit-and (long (.get sub I8 (long 0))) 0xFF))
-                                                       [(str nm "#" (read-name ip il))
-                                                        (invoke (:rty-clone api) (.get sub ADDR (long ITEM-OF)))]))))
-                                           (range (invoke (:iface-count api) of (.-ptr e))))))))))
+                               (let [nm (read-name pp lp)
+                                     r  (when (= ITEM-IFACE (bit-and (long (.get item I8 (long 0))) 0xFF))
+                                          (let [of (.get item ADDR (long ITEM-OF))
+                                                [ip il] (name-pair arena)
+                                                sub ^MemorySegment (.allocate arena (long ITEM))]
+                                            (into []
+                                                  (keep (fn [j]
+                                                          (when (invoke (:iface-nth api) of (.-ptr e) (long j) ip il sub)
+                                                            (let [res? (= ITEM-RESOURCE (bit-and (long (.get sub I8 (long 0))) 0xFF))
+                                                                  ;; Clone before the item goes: the clone is owned.
+                                                                  r (when res?
+                                                                      [(str nm "#" (read-name ip il))
+                                                                       (invoke (:rty-clone api) (.get sub ADDR (long ITEM-OF)))])]
+                                                              (invoke (:item-delete api) sub)
+                                                              r))))
+                                                  (range (invoke (:iface-count api) of (.-ptr e))))))]
+                                 (invoke (:item-delete api) item)
+                                 r))))
                      cat)
                     (range (invoke (:import-count api) ct (.-ptr e))))]
     ;; Cluster: each entry is {:names [...] :type ptr}.
@@ -1130,7 +1147,12 @@
                                  (cstr arena rname)
                                  (long (count (.getBytes ^String rname "UTF-8")))
                                  rty stub MemorySegment/NULL MemorySegment/NULL))))
-                nil))))))))
+                ;; add_resource borrows the type (c-api takes &ty and copies),
+                ;; so the host still owns it, and the header requires delete.
+                (invoke (:rty-delete api) rty)
+                nil))))
+        (doseq [cls classes]
+          (invoke (:rty-delete api) (:type cls)))))))
 
 (defn- define-imports!
   "Registers each supplied Clojure function with the linker. Missing imports
@@ -1234,6 +1256,9 @@
          rt      {:ctx ctx :api api :registry registry :pending pending}
          found (reflect-exports api arena e ct)
          sigs  (into {} (map (fn [x] [(:key x) (:sig x)])) found)
+        ;; The component type "must be deallocated" (component.h), and this is
+        ;; its last use. One leaked per instantiate is one per request.
+         _     (invoke (:type-delete api) ct)
          index-of (fn [path]
                     (when (empty? path)
                       (throw (ex-info "an export with no path" {:cljwit/error :internal})))
@@ -1283,10 +1308,10 @@
         _   (closed! (.-closed e) "engine")
         api (.-api e)]
     (with-open [arena (Arena/ofConfined)]
-      (let [ct (invoke (:comp-type api) (.-ptr art))]
-        (into {}
-              (map (fn [{:keys [key sig]}] [key sig]))
-              (reflect-exports api arena e ct))))))
+      (let [ct    (invoke (:comp-type api) (.-ptr art))
+            found (reflect-exports api arena e ct)]
+        (invoke (:type-delete api) ct)
+        (into {} (map (fn [{:keys [key sig]}] [key sig])) found)))))
 
 (defn drop-failures
   "Anything a `:drop` threw, and clears them. `0018` E: a destructor that
