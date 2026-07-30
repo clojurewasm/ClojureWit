@@ -70,6 +70,17 @@
                           (host/engine {:lib "/nonexistent/libwasmtime.dylib"})))]
       (is (= :no-library (:cljwit/error (ex-data ex))))
       (is (re-find #"/nonexistent/libwasmtime\.dylib" (ex-message ex)))))
+  (testing "a library that loads but is not wasmtime names the missing symbol"
+    ;; libjava ships with every JVM and dlopens fine, standing in for a
+    ;; pre-43 libwasmtime: loaded, then missing the component API.
+    (let [jvm-lib (io/file (System/getProperty "java.home") "lib"
+                           (System/mapLibraryName "java"))]
+      (if-not (.exists jvm-lib)
+        (println "no libjava at" (str jvm-lib) "— skipping symbol-missing case")
+        (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                              (host/engine {:lib (str jvm-lib)})))]
+          (is (= :symbol-missing (:cljwit/error (ex-data ex))))
+          (is (re-find #">= 43" (ex-message ex)))))))
   (when lib
     (testing "the system property is honored — and beats the environment"
       (try
@@ -129,6 +140,25 @@
       (is (= 0.25 ((:echo-f64 i) 0.25)))
       (testing "many sequential calls — the in-call flag must be released each time"
         (is (= 100 (count (distinct (map (fn [n] ((:echo-s32 i) n)) (range 100))))))))))
+
+(deftest describe-reads-the-artifact
+  ;; `0020` E: the generator's single source, and a REPL user's first
+  ;; question about an alien .wasm — no instance needed.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping describe test")
+    (let [c (build-component!)]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file c))]
+            (let [d (host/describe a)]
+              (is (= {:params [["v" :string]] :result :string}
+                     (get d "echo-string")))
+              (testing "identical to what instantiate finds"
+                (with-open [i (host/instantiate a)]
+                  (is (= d (into {}
+                                 (map (fn [k] [k (host/signature i k)]))
+                                 (host/exports i)))))))))
+        (finally (.delete ^File c))))))
 
 (deftest lifetimes-are-explicit
   (if-not lib

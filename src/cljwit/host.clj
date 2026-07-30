@@ -89,19 +89,21 @@
             ;; DYLD_LIBRARY_PATH and the OS defaults.
             nm))))
 
-(defn- open-lib ^SymbolLookup [^Arena arena explicit]
-  (let [src (lib-source explicit)]
-    (try
-      (SymbolLookup/libraryLookup ^String src arena)
-      (catch IllegalArgumentException e
-        (throw (ex-info
-                (str "libwasmtime failed to load from " (pr-str src)
-                     ". Pass (engine {:lib path}), set -Dcljwit.wasmtime.lib"
-                     " or CLJWIT_WASMTIME_LIB, or install it where a package"
-                     " manager puts it (`brew install wasmtime`; wasmtime's"
-                     " *-c-api release tarballs carry it too). doc/design/0019")
-                {:cljwit/error :no-library :cljwit/tried src}
-                e))))))
+(defn- open-lib
+  "Loads the already-resolved source — resolved once, by `api`, so a failure
+   report can never name a different library than the one actually tried."
+  ^SymbolLookup [^Arena arena ^String src]
+  (try
+    (SymbolLookup/libraryLookup src arena)
+    (catch IllegalArgumentException e
+      (throw (ex-info
+              (str "libwasmtime failed to load from " (pr-str src)
+                   ". Pass (engine {:lib path}), set -Dcljwit.wasmtime.lib"
+                   " or CLJWIT_WASMTIME_LIB, or install it where a package"
+                   " manager puts it (`brew install wasmtime`; wasmtime's"
+                   " *-c-api release tarballs carry it too). doc/design/0019")
+              {:cljwit/error :no-library :cljwit/tried src}
+              e)))))
 
 (defn- ffm
   "Binds one libwasmtime symbol. `ret` nil means void."
@@ -148,7 +150,7 @@
   [^Arena arena lib]
   (let [linker (Linker/nativeLinker)
         src    (lib-source lib)
-        lookup (open-lib arena lib)
+        lookup (open-lib arena src)
         b      (fn [nm ret & args] (ffm lookup linker src nm ret args))
         BOOL   ValueLayout/JAVA_BOOLEAN]
     {:engine-new    (b "wasm_engine_new" ADDR)
@@ -856,12 +858,18 @@
 
    `:lib` names the libwasmtime to bind; without it the property
    `cljwit.wasmtime.lib`, then `CLJWIT_WASMTIME_LIB`, then the conventional
-   install locations are tried, in that order (`0019`)."
+   install locations, then the platform library name via the system loader
+   are tried, in that order (`0019`)."
   (^Engine [] (engine {}))
   (^Engine [{:keys [lib]}]
-   (let [arena (Arena/ofShared)
-         a     (api arena lib)]
-     (->Engine arena a (invoke (:engine-new a)) (AtomicBoolean. false)))))
+   (let [arena (Arena/ofShared)]
+     ;; If binding fails — no library, or one too old to have the component
+     ;; API — close the arena, or the bad library stays dlopen'd for the
+     ;; life of the process.
+     (try
+       (let [a (api arena lib)]
+         (->Engine arena a (invoke (:engine-new a)) (AtomicBoolean. false)))
+       (catch Throwable t (.close arena) (throw t))))))
 
 (defn compile
   "Compiles a component. This is the expensive step — milliseconds, scaling
@@ -960,6 +968,39 @@
               (reset! (:pending rt) [])
               (run! (fn [p] (invoke (:res-delete api) p)) ps)))
           (.set ^AtomicReference in-call nil))))))
+
+(defn- reflect-exports
+  "Every exported function, flattened: [{:key :path :sig} …]. A function
+   inside an interface is keyed the way WIT spells it —
+   \"pkg:name/iface@ver#func\" — and remembers the path it needs to resolve
+   its export index (`0014` B)."
+  [api ^Arena arena ^Engine e ^MemorySegment ct]
+  (let [item-kind (fn [^MemorySegment it] (bit-and (long (.get it I8 (long 0))) 0xFF))
+        walk (fn walk [ty nth-f count-f prefix]
+               ;; Fresh out-parameters per level: a recursive walk that shares
+               ;; them has the inner call overwrite the outer's name
+               ;; mid-iteration, which is a JVM crash, not a wrong answer.
+               ;; And `cat` here, not only at the top — a recursive producer
+               ;; has to flatten its own layer.
+               (let [[pp lp] (name-pair arena)
+                     item ^MemorySegment (.allocate arena (long ITEM))
+                     one  (fn [i]
+                            (when (invoke nth-f ty (.-ptr e) (long i) pp lp item)
+                              (let [nm (read-name pp lp)
+                                    k  (item-kind item)
+                                    of (.get item ADDR (long ITEM-OF))]
+                                (cond
+                                  (= ITEM-FUNC k)
+                                  [{:key  (if prefix (str prefix "#" nm) nm)
+                                    :path (if prefix [prefix nm] [nm])
+                                    :sig  (reflect-func api arena of)}]
+
+                                  ;; One level: WIT does not nest interfaces.
+                                  (and (= ITEM-IFACE k) (nil? prefix))
+                                  (walk of (:iface-nth api) (:iface-count api) nm)))))]
+                 (into [] (comp (keep one) cat)
+                       (range (invoke count-f ty (.-ptr e))))))]
+    (walk ct (:export-nth api) (:export-count api) nil)))
 
 (defn- reflect-imports
   "What the component needs, keyed exactly as exports are (`0017` A)."
@@ -1191,38 +1232,7 @@
         ;; calls into a store.
          pending  (atom [])
          rt      {:ctx ctx :api api :registry registry :pending pending}
-         item-kind (fn [^MemorySegment it] (bit-and (long (.get it I8 (long 0))) 0xFF))
-        ;; Every export, flattened. A function inside an interface is keyed the
-        ;; way WIT spells it — "pkg:name/iface@ver#func" — and remembers the
-        ;; path it needs to resolve its export index (0014 B).
-        ;; Fresh out-parameters per level: a recursive walk that shares them
-        ;; has the inner call overwrite the outer's name mid-iteration, which
-        ;; is a JVM crash rather than a wrong answer.
-         walk  (fn walk [ty nth-f count-f prefix]
-                ;; Fresh out-parameters per level: a recursive walk that shares
-                ;; them has the inner call overwrite the outer's name
-                ;; mid-iteration, which is a JVM crash, not a wrong answer.
-                ;; And `cat` here, not only at the top — a recursive producer
-                ;; has to flatten its own layer.
-                 (let [[pp lp] (name-pair arena)
-                       item ^MemorySegment (.allocate arena (long ITEM))
-                       one  (fn [i]
-                              (when (invoke nth-f ty (.-ptr e) (long i) pp lp item)
-                                (let [nm (read-name pp lp)
-                                      k  (item-kind item)
-                                      of (.get item ADDR (long ITEM-OF))]
-                                  (cond
-                                    (= ITEM-FUNC k)
-                                    [{:key  (if prefix (str prefix "#" nm) nm)
-                                      :path (if prefix [prefix nm] [nm])
-                                      :sig  (reflect-func api arena of)}]
-
-                                   ;; One level: WIT does not nest interfaces.
-                                    (and (= ITEM-IFACE k) (nil? prefix))
-                                    (walk of (:iface-nth api) (:iface-count api) nm)))))]
-                   (into [] (comp (keep one) cat)
-                         (range (invoke count-f ty (.-ptr e))))))
-         found (walk ct (:export-nth api) (:export-count api) nil)
+         found (reflect-exports api arena e ct)
          sigs  (into {} (map (fn [x] [(:key x) (:sig x)])) found)
          index-of (fn [path]
                     (when (empty? path)
@@ -1262,6 +1272,21 @@
                                        (export-fn api arena ctx f sig closed in-call key rt dead)))])))
                      found)]
      (->Instance art arena fns (alias-map fns) sigs store closed in-call registry dead rtab))))
+
+(defn describe
+  "Every exported function and its declared shape, keyed by exact WIT name,
+   read from the compiled artifact alone — no instance needed. The same walk
+   `instantiate` performs, so the two can never disagree (`0020` E)."
+  [^Artifact art]
+  (closed! (.-closed art) "artifact")
+  (let [^Engine e (.-engine art)
+        _   (closed! (.-closed e) "engine")
+        api (.-api e)]
+    (with-open [arena (Arena/ofConfined)]
+      (let [ct (invoke (:comp-type api) (.-ptr art))]
+        (into {}
+              (map (fn [{:keys [key sig]}] [key sig]))
+              (reflect-exports api arena e ct))))))
 
 (defn drop-failures
   "Anything a `:drop` threw, and clears them. `0018` E: a destructor that
