@@ -13,6 +13,9 @@
     "ClojureWasm":    { "url": "https://github.com/clojurewasm/ClojureWasm",      "why": "sibling; read its doc/decisions and debt ledger for what went wrong" },
     "zwasm":          { "url": "https://github.com/clojurewasm/zwasm",            "why": "sibling; a Wasm engine written from scratch, including its JIT notes" },
     "clj.wasm":       { "url": "https://github.com/kanaka/clj.wasm",              "why": "earlier exploration of this exact question" },
+    "tools.analyzer":     { "url": "https://github.com/clojure/tools.analyzer",     "why": "the retargetable analyzer; 0022 E defers the front-end choice to reading this, not recalling it" },
+    "tools.analyzer.jvm": { "url": "https://github.com/clojure/tools.analyzer.jvm", "why": "what a complete tools.analyzer host layer actually costs, measured by example" },
+    "teavm":              { "url": "https://github.com/konsoletyper/teavm",         "why": "a production JVM-hosted Java-to-WasmGC compiler; the third prior art for the emitter and object model" },
 
     "wasmtime":        { "url": "https://github.com/bytecodealliance/wasmtime",     "large": true, "why": "the C API cljwit.host binds to (crates/c-api), and the reference Component Model implementation" },
     "component-model": { "url": "https://github.com/WebAssembly/component-model", "why": "the Canonical ABI we must emit by hand (S4); issue #525 is GC-in-ABI, still a pre-proposal" },
