@@ -7,4 +7,9 @@ interface host {
   mint: func(v: u32) -> token;
   peek: func(t: borrow<token>) -> u32;
 }
-world w { import host; export run: func(v: u32) -> u32; }
+world w {
+  import host;
+  export run: func(v: u32) -> u32;
+  /// Mints and keeps the handle, so the instance closes with one outstanding.
+  export leak: func(v: u32) -> u32;
+}

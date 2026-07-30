@@ -736,7 +736,7 @@
 
 (deftype Instance [^Artifact artifact ^Arena arena exports aliases sigs
                    ^MemorySegment store ^AtomicBoolean closed ^AtomicReference in-call
-                   registry dead]
+                   registry dead rtab]
   java.lang.AutoCloseable
   (close [_]
     ;; 0014 D: close is an entry into the store like any other. Take `in-call`
@@ -761,9 +761,21 @@
         (let [errs (reduce (fn [acc ^java.lang.AutoCloseable h]
                              (try (.close h) acc (catch Throwable t (conj acc t))))
                            [] @registry)]
+          ;; 0018 D: then the host resources the guest never dropped. A guest
+          ;; destructor can call a host import and even mint, so this drains to
+          ;; a fixed point rather than walking a snapshot.
+          (let [dropf @(:drop rtab)]
+            (loop [guard 0]
+              (let [t @(:table rtab)]
+                (when (and (seq t) (< guard 100))
+                  (reset! (:table rtab) {})
+                  (doseq [[_ [v]] t]
+                    (try (when dropf (dropf v))
+                         (catch Throwable x (swap! (:errs rtab) conj x))))
+                  (recur (inc guard))))))
           (invoke (:store-delete (.-api ^Engine (.-engine artifact))) store)
           (.close arena)
-          (when-let [t (first errs)] (throw t)))))
+          (when-let [t (or (first errs) (first @(:errs rtab)))] (throw t)))))
     nil)
   clojure.lang.ILookup
   (valAt [this k] (.valAt ^clojure.lang.ILookup this k ::none))
@@ -966,7 +978,8 @@
 
 (defn- define-resources!
   "Registers one host resource type per cluster, under every name in it."
-  [api ^Arena arena ^Engine e clink ^MemorySegment ct resources table drop-errs cache]
+  [api ^Arena arena ^Engine e clink ^MemorySegment ct resources table drop-errs cache
+   drop-holder]
   (when (seq resources)
     (let [classes (reflect-import-resources api arena e ct)
           known   (set (mapcat :names classes))
@@ -985,6 +998,7 @@
                               {:cljwit/error :duplicate-resource :cljwit/names named})))
             (when-let [nm (first named)]
               (let [drop-fn (:drop (get resources nm))
+                    _ (reset! drop-holder drop-fn)
                     tag (int (inc i))
                     dtor (reify ResourceDtor
                            (call [_ _d _cx rep]
@@ -1095,10 +1109,11 @@
         ;; report a trap with the cause gone.
          dead  (atom nil)
         ;; 0018 B: the rep table, and the failures a `:drop` collected.
-         rtab  {:ctx ctx :table (atom {}) :next (atom 0) :errs (atom [])}
+         rtab  {:ctx ctx :table (atom {}) :next (atom 0) :errs (atom [])
+                :drop (atom nil)}
          li-cache (atom {})
          _     (define-resources! api arena e clink ct resources
-                 (:table rtab) (:errs rtab) li-cache)
+                 (:table rtab) (:errs rtab) li-cache (:drop rtab))
          _     (define-imports! api arena e ctx clink ct imports dead rtab li-cache)
          _     (when wasi (enable-wasi! api arena ctx clink wasi))
          inst  ^MemorySegment (.allocate arena (long INSTANCE))
@@ -1185,7 +1200,15 @@
                                                          {:cljwit/error :wasmtime})))
                                        (export-fn api arena ctx f sig closed in-call key rt dead)))])))
                      found)]
-     (->Instance art arena fns (alias-map fns) sigs store closed in-call registry dead))))
+     (->Instance art arena fns (alias-map fns) sigs store closed in-call registry dead rtab))))
+
+(defn drop-failures
+  "Anything a `:drop` threw, and clears them. `0018` E: a destructor that
+   throws must not kill the instance, but a failure nobody can read is the
+   silent failure `0016` exists to eliminate — so `close` rethrows whatever
+   was never read."
+  [^Instance i]
+  (let [a (:errs (.-rtab i))] (first (swap-vals! a (constantly [])))))
 
 (defn exports
   "Every exported function, by its exact WIT name."

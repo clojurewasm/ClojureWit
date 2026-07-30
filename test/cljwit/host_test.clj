@@ -550,6 +550,35 @@
                   (is (= [same same] @dropped)
                       ":drop is per handle, not per value"))))
 
+            (testing "0018 D — close drops what the guest still holds"
+              ;; store_delete runs no host destructors, so clearing the table
+              ;; would drop every surviving file on the floor.
+              (let [dropped (atom [])
+                    i (host/instantiate
+                       a {:resources {"local:hres/host@0.1.0#token"
+                                      {:drop (fn [v] (swap! dropped conj v))}}
+                          :imports {"local:hres/host@0.1.0#mint" (fn [v] {:kept v})
+                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))}})]
+                (is (= 9 ((i "leak") 9)) "the guest mints and keeps the handle")
+                (is (= [] @dropped) "nothing dropped while it is held")
+                (.close ^java.lang.AutoCloseable i)
+                (is (= [{:kept 9}] @dropped)
+                    "close dropped it, rather than clearing the table")))
+
+            (testing "0018 E — a :drop that throws is readable, not silent"
+              (let [i (host/instantiate
+                       a {:resources {"local:hres/host@0.1.0#token"
+                                      {:drop (fn [_] (throw (ex-info "close! failed" {})))}}
+                          :imports {"local:hres/host@0.1.0#mint" (fn [v] {:kept v})
+                                    "local:hres/host@0.1.0#peek" (fn [t] (:kept t))}})]
+                (is (= 5 ((i "run") 5))
+                    "the guest's drop still succeeds — 0017 D would have killed the instance")
+                (is (= 1 (count (host/drop-failures i)))
+                    "and the failure is readable")
+                (is (empty? (host/drop-failures i))
+                    "reading them clears them, so close has nothing to rethrow")
+                (.close ^java.lang.AutoCloseable i)))
+
             (testing "a resource the component does not declare is a typo"
               (let [ex (is (thrown? clojure.lang.ExceptionInfo
                                     (host/instantiate
