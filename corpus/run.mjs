@@ -14,9 +14,16 @@ const instance = new WebAssembly.Instance(
 try {
   console.log(`result ${instance.exports.entry()}`);
 } catch (e) {
+  // An uncaught Clojure throw is a WebAssembly.Exception on our tag;
+  // its payload's class is read back through Wasm, since GC structs
+  // are opaque to JS (0027). The tag must be THIS instance's — tag
+  // identity is per-instance.
+  if (e instanceof WebAssembly.Exception && e.is(instance.exports["clj-exn"])) {
+    console.log(`exn ${instance.exports.exn_class(e.getArg(instance.exports["clj-exn"], 0))}`);
+  }
   // V8 reports wasm stack exhaustion as RangeError, not RuntimeError
   // (0024) — both are classified outcomes, not harness failures.
-  if (e instanceof WebAssembly.RuntimeError || e instanceof RangeError)
+  else if (e instanceof WebAssembly.RuntimeError || e instanceof RangeError)
     console.log(`trap ${e.message}`);
   else throw e;
 }

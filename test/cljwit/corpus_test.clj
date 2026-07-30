@@ -87,18 +87,32 @@
       (throw (ex-info "the node corpus lane itself failed" {:err err}))
       (str/starts-with? line "result ") {:value (subs line 7)}
       (str/starts-with? line "trap ")   {:trap (subs line 5)}
+      ;; An uncaught Clojure throw, class-precise on this lane (0027).
+      (str/starts-with? line "exn ")    {:exn (parse-long (subs line 4))}
       :else (throw (ex-info (str "unrecognized corpus lane output: " (pr-str line)) {})))))
 
 ;; --- comparison -------------------------------------------------------------
 
 (defn- trap-matches?
   "True when a trap-table row licenses comparing this oracle throw equal
-   to this engine trap (0022 B.5)."
+   to this engine trap (0022 B.5). A row without a pattern for this
+   engine licenses nothing on it."
   [engine {:keys [message] :as oracle} trap]
   (boolean (some (fn [row]
                    (and (= (:class row) (:throw oracle))
                         (str/includes? (or message "") (:jvm-message row))
-                        (str/includes? trap (get row engine))))
+                        (when-let [pat (get row engine)]
+                          (str/includes? trap pat))))
+                 trap-table)))
+
+(defn- exn-matches?
+  "The class-precise half (0027): a lane that read the thrown payload's
+   class enum compares through a row's :exn-class."
+  [{:keys [message] :as oracle} exn-class]
+  (boolean (some (fn [row]
+                   (and (= (:class row) (:throw oracle))
+                        (str/includes? (or message "") (:jvm-message row))
+                        (= (:exn-class row) exn-class)))
                  trap-table)))
 
 (defn- out-of-contract?
@@ -120,6 +134,16 @@
           (str label ": oracle threw " (:throw oracle) " (" (:message oracle)
                ") but no corpus/trap_table.edn row matches the trap: "
                (str/trim (:trap lane))))
+
+      (and (contains? oracle :throw) (contains? lane :exn))
+      (is (exn-matches? oracle (:exn lane))
+          (str label ": oracle threw " (:throw oracle) " (" (:message oracle)
+               ") but no trap-table row carries :exn-class " (:exn lane)))
+
+      (and (contains? oracle :value) (contains? lane :exn))
+      (is false
+          (str label ": oracle returned " (pr-str (:value oracle))
+               " but the lane threw exn class " (:exn lane)))
 
       (and (contains? oracle :value) (contains? lane :trap))
       (is false

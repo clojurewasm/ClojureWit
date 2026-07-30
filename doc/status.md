@@ -57,8 +57,18 @@ _Short by design, and printed at every session start — so findings live in
    flags (never `Features.All`), non-stacky emission.
    `corpus/devloop_differential.mjs` (113/113) is part of "done" for
    emitted-grammar changes until the dev lane is in the gate.
-   Remaining open: **the throw representation** — the next unit —
-   after which S2's nREPL unit is unblocked on both sides.
+   **The throw representation is decided and implemented** (`0027`):
+   a Clojure throw is a Wasm exception — one nominal tag, a class-enum
+   payload (`$Exn`; message waits for strings), overflow arms throw
+   `ArithmeticException`/"long overflow" (row 3, all three ops in the
+   corpus), the V8 lane class-precise, the wasmtime CLI lane
+   class-blind by a named hole, and traps stay uncatchable — including
+   stack exhaustion, a divergence numbered before `try` exists. **Every
+   S3 design decision is now closed.** Next: the S3 stop condition
+   still says *a browser*, and only node's V8 has run anything — the
+   next unit is **a real browser page running a corpus module**, the
+   smallest thing that would fail if "browser" were untrue; then S2's
+   nREPL unit, now unblocked on both sides.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

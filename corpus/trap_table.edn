@@ -10,6 +10,12 @@
 ;; 2026-07-30 on the pinned toolchain (wasmtime 47.0.1, V8/node).
 ;; Row 2 matches on class alone (:jvm-message "") — StackOverflowError's
 ;; message is null, a recorded weakening of the jvm-message guard (0024).
+;;
+;; Rows with :exn-class are thrown Wasm exceptions (0027): the V8 lane
+;; reads the class enum precisely; the wasmtime CLI lane prints the
+;; same "thrown Wasm exception" for every class — the visible
+;; duplication IS the named hole, retired when try/catch makes classes
+;; observable in-program.
 [{:row 1
   :class "java.lang.ArithmeticException"
   :jvm-message "/ by zero"
@@ -19,4 +25,9 @@
   :class "java.lang.StackOverflowError"
   :jvm-message ""
   :wasmtime "call stack exhausted"
-  :v8 "Maximum call stack size exceeded"}]
+  :v8 "Maximum call stack size exceeded"}
+ {:row 3
+  :class "java.lang.ArithmeticException"
+  :jvm-message "long overflow"
+  :exn-class 1
+  :wasmtime "thrown Wasm exception"}]

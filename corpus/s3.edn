@@ -121,4 +121,9 @@
  {:id "box-fib-91"       :forms [(defn fib-iter [n]
                                    (loop [i n a 0 b 1]
                                      (if (< 0 i) (recur (- i 1) b (+ a b)) a)))
-                                 (fib-iter 91)]}]
+                                 (fib-iter 91)]}
+ ;; --- a taken overflow arm throws (0027, trap-table row 3): all three
+ ;; ops, each against real clojure's ArithmeticException "long overflow".
+ {:id "throw-add-overflow" :forms [(+ 9223372036854775807 1)]}
+ {:id "throw-neg-min"      :forms [(- -9223372036854775808)]}
+ {:id "throw-mul-overflow" :forms [(* 4611686018427387904 2)]}]

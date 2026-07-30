@@ -7,9 +7,7 @@
    are `$BoxI64` structs; nil is the null reference; false and true are
    singleton struct globals distinct by identity. Arithmetic unboxes
    either representation, computes in i64, and re-boxes through the one
-   canonicalizing guard. The overflow arms are `(unreachable)` — the
-   throw representation is the open decision (`0022` C, `0025` §4) and
-   no corpus entry may reach them.
+   canonicalizing guard; a taken overflow arm throws (`0027`).
 
    fn (`0024`): closures are subtypes of a `$Fn` base struct carrying one
    nullable typed-function-ref slot per arity; each capture signature is
@@ -18,7 +16,12 @@
    which are plain `call` — the first place the two modes emit different
    bytes. Method funcs declare `(type $sigN)` explicitly: a bare func
    type would canonicalize as its own singleton rec group and lose
-   identity with the slot's field type (`0009`'s rule, again)."
+   identity with the slot's field type (`0009`'s rule, again).
+
+   throw (`0027`): a Clojure throw is a Wasm exception — one tag
+   `$clj-exn` whose payload is a Clojure value, today `$Exn` with a
+   class enum (trap_table.edn's :exn-class column). The overflow arms
+   throw class 1; message comparison waits for strings."
   (:require [clojure.string :as str]
             [clojure.tools.analyzer.ast :as ast]))
 
@@ -377,6 +380,15 @@
 (def ^:private runtime
   "  (type $Unit (struct))
   (type $BoxI64 (struct (field $v i64)))
+  ;; The throw representation (0027): one tag, payload is a Clojure
+  ;; value — today a class enum; the message half waits for strings.
+  (type $Exn (struct (field $class i32)))
+  (tag $clj-exn (export \"clj-exn\") (param (ref null eq)))
+  ;; Corpus scaffolding, not ABI: lets the V8 runner read a caught
+  ;; payload's class back through Wasm, since GC structs are opaque
+  ;; to JS (0027).
+  (func $exn-class (export \"exn_class\") (param $e (ref null eq)) (result i64)
+    (i64.extend_i32_s (struct.get $Exn $class (ref.cast (ref $Exn) (local.get $e)))))
   (global $false (ref $Unit) (struct.new $Unit))
   (global $true (ref $Unit) (struct.new $Unit))
   (func $truthy (param $v (ref null eq)) (result i32)
@@ -396,8 +408,8 @@
                 (i64.shr_s (i64.shl (local.get $v) (i64.const 33)) (i64.const 33)))
       (then (ref.i31 (i32.wrap_i64 (local.get $v))))
       (else (struct.new $BoxI64 (local.get $v)))))
-  ;; Overflow arms are the open throw representation (0022 C, 0025 §4);
-  ;; signed-overflow checks per Hacker's Delight sign rules.
+  ;; Signed-overflow checks per Hacker's Delight sign rules; a taken
+  ;; arm throws ArithmeticException \"long overflow\" — class 1 (0027).
   (func $add (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
     (local $x i64) (local $y i64) (local $t i64)
     (local.set $x (call $unbox (local.get $a)))
@@ -406,7 +418,7 @@
     (if (i64.lt_s (i64.and (i64.xor (local.get $x) (local.get $t))
                            (i64.xor (local.get $y) (local.get $t)))
                   (i64.const 0))
-      (then (unreachable)))
+      (then (throw $clj-exn (struct.new $Exn (i32.const 1)))))
     (call $box (local.get $t)))
   (func $sub (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
     (local $x i64) (local $y i64) (local $t i64)
@@ -416,7 +428,7 @@
     (if (i64.lt_s (i64.and (i64.xor (local.get $x) (local.get $y))
                            (i64.xor (local.get $x) (local.get $t)))
                   (i64.const 0))
-      (then (unreachable)))
+      (then (throw $clj-exn (struct.new $Exn (i32.const 1)))))
     (call $box (local.get $t)))
   (func $mul (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
     (local $x i64) (local $y i64) (local $t i64)
@@ -429,9 +441,9 @@
       (then
         (if (i32.and (i64.eq (local.get $x) (i64.const -1))
                      (i64.eq (local.get $y) (i64.const -9223372036854775808)))
-          (then (unreachable)))
+          (then (throw $clj-exn (struct.new $Exn (i32.const 1)))))
         (if (i64.ne (i64.div_s (local.get $t) (local.get $x)) (local.get $y))
-          (then (unreachable)))))
+          (then (throw $clj-exn (struct.new $Exn (i32.const 1)))))))
     (call $box (local.get $t)))
   ;; quot: y = -1 wraps like the JVM's long division (MIN / -1 is MIN,
   ;; silently); y = 0 takes the native division trap, trap-table row 1.
