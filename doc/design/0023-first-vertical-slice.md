@@ -68,11 +68,16 @@ representation for everything the slice touches.
 1. **Every Clojure value is `(ref null eq)`.** One uniform type; no
    unboxing pass in the slice. Refinement is a prod-mode optimisation
    later, per binaryen's lowering guidance already cited in `0022` A.
-2. **Fixnums are `i31`** — B3's measured substrate, verbatim. A literal
-   outside i31's signed 31-bit range is a **compile error** in the slice:
-   that value belongs to the boxed-i64 lane, which is open (`0022` C)
-   precisely because it is unmeasured. Runtime arithmetic computes in
-   i64 and re-boxes through one guard; a result outside i31 hits
+2. **Fixnums are `i31`** — B3's measured substrate, verbatim. *(Amended
+   the same day: the rest of this point described the slice before B8
+   ran. `0025` measured the boxed lane, decided canonical fixnums, and
+   the emitter now boxes longs outside i31 as `$BoxI64` — the compile
+   error and the `unreachable` re-box arm below lasted exactly as long
+   as the lane was unmeasured, which was the point.)* A literal
+   outside i31's signed 31-bit range was a **compile error** in the
+   slice: that value belonged to the boxed-i64 lane, open (`0022` C)
+   precisely because it was unmeasured. Runtime arithmetic computes in
+   i64 and re-boxes through one guard; a result outside i31 hit
    `(unreachable)` — the same shape B3 measured, and the same honesty:
    the slow path exists and no corpus entry may reach it yet. The
    corresponding **corpus authoring rule covers intermediates and

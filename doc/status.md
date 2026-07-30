@@ -41,9 +41,16 @@ _Short by design, and printed at every session start — so findings live in
    value fitting i31 must not exist; the probe measured free). Still
    open: the dev-loop output format (before the nREPL unit) and the
    throw representation (its check is priced, its taken arm is not).
-   Next unit: **the boxed lane in the emitter** — `$box` grows its
-   boxed arm, ops unbox both representations, literals beyond i31
-   compile — with its corpus entries in the same commit.
+   **The boxed lane is in the emitter** (57 corpus entries): longs
+   beyond i31 compile, fixnums canonicalize through `$box`, `quot`
+   wraps at MIN∕−1 like the JVM, and the corpus runs the stop-condition
+   domain iteratively — fib(46) and fib(91); the 92 entry died at the
+   oracle's hands because that loop shape computes one step ahead, and
+   the corpus comment records it. Next unit: **the dev-loop output
+   format** (`0009`'s precondition, `0022` A's candidate list —
+   assembling near the engine, a persistent assembler, batching,
+   TeaVM's writer), because it gates S2's nREPL unit and is the larger
+   of the two open decisions; the throw representation follows it.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

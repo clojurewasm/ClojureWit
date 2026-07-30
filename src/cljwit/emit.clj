@@ -2,11 +2,14 @@
   "AST -> WAT text, the batch emitter (`doc/design/0022` A; the value
    representation is pinned in `0023`, fn's in `0024`).
 
-   Every value is `(ref null eq)`; fixnums are i31; nil is the null
-   reference; false and true are singleton struct globals distinct by
-   identity. Arithmetic computes in i64 and re-boxes through one guard
-   whose failure arm is `unreachable` — the boxed-i64 lane is open
-   (`0022` C) and no corpus entry may reach it.
+   Every value is `(ref null eq)`; fixnums are i31 and canonical — a
+   boxed value that fits i31 must not exist (`0025`); longs outside i31
+   are `$BoxI64` structs; nil is the null reference; false and true are
+   singleton struct globals distinct by identity. Arithmetic unboxes
+   either representation, computes in i64, and re-boxes through the one
+   canonicalizing guard. The overflow arms are `(unreachable)` — the
+   throw representation is the open decision (`0022` C, `0025` §4) and
+   no corpus entry may reach them.
 
    fn (`0024`): closures are subtypes of a `$Fn` base struct carrying one
    nullable typed-function-ref slot per arity; each capture signature is
@@ -64,8 +67,10 @@
     :number (cond
               (not (integer? val))
               (out-of-slice! (str "non-integer literal " (pr-str val)) ast)
-              (or (< val i31-min) (> val i31-max))
-              (out-of-slice! (str "literal " val " outside i31 — the boxed lane is open (0022 C)") ast)
+              (not (instance? Long val))
+              (out-of-slice! (str "integer literal beyond long: " (pr-str val)) ast)
+              (or (< ^long val i31-min) (> ^long val i31-max))
+              (format "(struct.new $BoxI64 (i64.const %d))" val)
               :else (format "(ref.i31 (i32.const %d))" val))
     :bool   (if val "(global.get $true)" "(global.get $false)")
     :nil    "(ref.null eq)"
@@ -366,28 +371,72 @@
 
 (def ^:private runtime
   "  (type $Unit (struct))
+  (type $BoxI64 (struct (field $v i64)))
   (global $false (ref $Unit) (struct.new $Unit))
   (global $true (ref $Unit) (struct.new $Unit))
   (func $truthy (param $v (ref null eq)) (result i32)
     (i32.eqz (i32.or (ref.is_null (local.get $v))
                      (ref.eq (local.get $v) (global.get $false)))))
+  ;; Either numeric representation -> i64. A non-number traps the cast
+  ;; (out-of-contract until an exception representation exists).
   (func $unbox (param $v (ref null eq)) (result i64)
-    (i64.extend_i32_s (i31.get_s (ref.cast (ref i31) (local.get $v)))))
+    (if (result i64) (ref.test (ref i31) (local.get $v))
+      (then (i64.extend_i32_s (i31.get_s (ref.cast (ref i31) (local.get $v)))))
+      (else (struct.get $BoxI64 $v (ref.cast (ref $BoxI64) (local.get $v))))))
+  ;; The canonicalizing guard (0025): fits i31 -> i31, else a fresh box.
+  ;; A boxed value that fits i31 must not exist.
   (func $box (param $v i64) (result (ref eq))
-    ;; 31-bit signed range check; the failure arm is the boxed-i64 lane,
-    ;; open and unmeasured (0022 C) — no corpus entry may reach it.
-    (if (i64.ne (local.get $v)
+    (if (result (ref eq))
+        (i64.eq (local.get $v)
                 (i64.shr_s (i64.shl (local.get $v) (i64.const 33)) (i64.const 33)))
-      (then (unreachable)))
-    (ref.i31 (i32.wrap_i64 (local.get $v))))
+      (then (ref.i31 (i32.wrap_i64 (local.get $v))))
+      (else (struct.new $BoxI64 (local.get $v)))))
+  ;; Overflow arms are the open throw representation (0022 C, 0025 §4);
+  ;; signed-overflow checks per Hacker's Delight sign rules.
   (func $add (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
-    (call $box (i64.add (call $unbox (local.get $a)) (call $unbox (local.get $b)))))
+    (local $x i64) (local $y i64) (local $t i64)
+    (local.set $x (call $unbox (local.get $a)))
+    (local.set $y (call $unbox (local.get $b)))
+    (local.set $t (i64.add (local.get $x) (local.get $y)))
+    (if (i64.lt_s (i64.and (i64.xor (local.get $x) (local.get $t))
+                           (i64.xor (local.get $y) (local.get $t)))
+                  (i64.const 0))
+      (then (unreachable)))
+    (call $box (local.get $t)))
   (func $sub (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
-    (call $box (i64.sub (call $unbox (local.get $a)) (call $unbox (local.get $b)))))
+    (local $x i64) (local $y i64) (local $t i64)
+    (local.set $x (call $unbox (local.get $a)))
+    (local.set $y (call $unbox (local.get $b)))
+    (local.set $t (i64.sub (local.get $x) (local.get $y)))
+    (if (i64.lt_s (i64.and (i64.xor (local.get $x) (local.get $y))
+                           (i64.xor (local.get $x) (local.get $t)))
+                  (i64.const 0))
+      (then (unreachable)))
+    (call $box (local.get $t)))
   (func $mul (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
-    (call $box (i64.mul (call $unbox (local.get $a)) (call $unbox (local.get $b)))))
+    (local $x i64) (local $y i64) (local $t i64)
+    (local.set $x (call $unbox (local.get $a)))
+    (local.set $y (call $unbox (local.get $b)))
+    (local.set $t (i64.mul (local.get $x) (local.get $y)))
+    ;; The a = -1, b = MIN case must be tested before the division below
+    ;; would itself trap on MIN / -1.
+    (if (i64.ne (local.get $x) (i64.const 0))
+      (then
+        (if (i32.and (i64.eq (local.get $x) (i64.const -1))
+                     (i64.eq (local.get $y) (i64.const -9223372036854775808)))
+          (then (unreachable)))
+        (if (i64.ne (i64.div_s (local.get $t) (local.get $x)) (local.get $y))
+          (then (unreachable)))))
+    (call $box (local.get $t)))
+  ;; quot: y = -1 wraps like the JVM's long division (MIN / -1 is MIN,
+  ;; silently); y = 0 takes the native division trap, trap-table row 1.
   (func $quot (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
-    (call $box (i64.div_s (call $unbox (local.get $a)) (call $unbox (local.get $b)))))
+    (local $x i64) (local $y i64)
+    (local.set $x (call $unbox (local.get $a)))
+    (local.set $y (call $unbox (local.get $b)))
+    (if (result (ref eq)) (i64.eq (local.get $y) (i64.const -1))
+      (then (call $box (i64.sub (i64.const 0) (local.get $x))))
+      (else (call $box (i64.div_s (local.get $x) (local.get $y))))))
   (func $lt (param $a (ref null eq)) (param $b (ref null eq)) (result (ref eq))
     (if (result (ref eq))
         (i64.lt_s (call $unbox (local.get $a)) (call $unbox (local.get $b)))
@@ -452,4 +501,6 @@
          "  (func $entry (export \"entry\") (result i64)\n"
          (str/join (map #(str "    " % "\n") @(:local-decls ctx)))
          (str/join (map #(str "    " % "\n") stmts))
-         (format "    (i64.extend_i32_s (i31.get_s (ref.cast (ref i31) %s)))))\n" ret))))
+         ;; $unbox accepts both numeric representations; a non-number
+         ;; result traps its cast — 0022 B.3's scalar rule, mechanically.
+         (format "    (call $unbox %s)))\n" ret))))

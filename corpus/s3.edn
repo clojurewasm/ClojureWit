@@ -93,4 +93,32 @@
  ;; so redefinition works in both modes.
  {:id "fn-redef-marked" :forms [(def ^:redef f (fn [] 1))
                                 (def ^:redef f (fn [] 2))
-                                (f)]}]
+                                (f)]}
+ ;; --- the boxed-i64 lane (0025): longs outside i31 are $BoxI64 and
+ ;; fixnums are canonical. True 64-bit overflow stays out of contract
+ ;; until the throw representation lands.
+ {:id "box-lit"          :forms [2147483648]}
+ {:id "box-lit-long-max" :forms [9223372036854775807]}
+ {:id "box-lit-long-min" :forms [-9223372036854775808]}
+ {:id "box-cross-up"     :forms [(+ 1073741823 1)]}
+ ;; Comes back under the i31 boundary: exercises the canonicalizing arm.
+ {:id "box-canon-down"   :forms [(- (+ 1073741823 1) 1)]}
+ {:id "box-mul"          :forms [(* 100000 100000)]}
+ {:id "box-quot-down"    :forms [(quot 10000000000 100000)]}
+ ;; JVM long division wraps silently at MIN / -1; so do we (0025).
+ {:id "box-quot-min-neg1" :forms [(quot -9223372036854775808 -1)]}
+ {:id "box-lt"           :forms [(if (< 2147483648 2147483649) 1 2)]}
+ {:id "box-mixed-lt"     :forms [(if (< 5 2147483648) 1 2)]}
+ ;; The stop-condition domain (0022 C, iteratively): fib(46) is the
+ ;; first value off i31. The upper entry is 91, not 92: this loop shape
+ ;; computes fib(n+1) into b on the last iteration, and at n = 92 real
+ ;; clojure throws "long overflow" one step ahead of the returned value
+ ;; — the oracle caught exactly that when this entry first said 92.
+ {:id "box-fib-46"       :forms [(defn fib-iter [n]
+                                   (loop [i n a 0 b 1]
+                                     (if (< 0 i) (recur (- i 1) b (+ a b)) a)))
+                                 (fib-iter 46)]}
+ {:id "box-fib-91"       :forms [(defn fib-iter [n]
+                                   (loop [i n a 0 b 1]
+                                     (if (< 0 i) (recur (- i 1) b (+ a b)) a)))
+                                 (fib-iter 91)]}]
