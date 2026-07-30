@@ -15,20 +15,60 @@ The name is from [WIT], the language-neutral interface definition language of th
 [Component Model]. WIT is the seam; ClojureWit is what sits on the Clojure side
 of it.
 
-> **Status: pre-alpha, design + feasibility phase.** There is no compiler yet.
-> The first milestone is a set of benchmarks that decide whether the core design
-> is viable at all — see [`doc/roadmap.md`](doc/roadmap.md). Nothing here is
-> stable; do not build on it.
+> **Status: pre-alpha.** There is no compiler yet. The feasibility benchmarks
+> are measured and the design survived them — the verdict is
+> [`doc/design/0010`](doc/design/0010-s0-verdict.md). `cljwit.host` works
+> today; its API is not yet stable. See [`doc/roadmap.md`](doc/roadmap.md).
 
 ## Two deliverables
 
 | | What | State |
 |---|---|---|
-| **`cljwit.host`** | A plain Clojure library: call Wasm components from JVM Clojure. No new dialect, no compiler. | planned |
+| **`cljwit.host`** | A plain Clojure library: call Wasm components from JVM Clojure. No new dialect, no compiler. | **works, pre-alpha** |
 | **`cljwit`** | The compiler: Clojure → Wasm component (WasmGC, tail calls, Wasm 3.0). | design |
 
 `cljwit.host` ships first and stands on its own. It also settles the WIT ↔ Clojure
 type mapping that the compiler needs, so the hard part gets solved once.
+
+## `cljwit.host` in five minutes
+
+Requirements: **Java 22+** (`java.lang.foreign`; developed on 25) and
+**libwasmtime ≥ 43** — `brew install wasmtime` provides it, or unpack a
+[`*-c-api` release tarball](https://github.com/bytecodealliance/wasmtime/releases)
+and point `CLJWIT_WASMTIME_LIB` at the shared library
+([`doc/design/0019`](doc/design/0019-finding-libwasmtime.md) has the full
+resolution order).
+
+```clojure
+;; deps.edn
+{:deps {io.github.clojurewasm/ClojureWit
+        {:git/sha "..."}}  ;; pre-alpha: pin a sha, expect breakage
+ :aliases {:dev {:jvm-opts ["--enable-native-access=ALL-UNNAMED"]}}}
+```
+
+```clojure
+(require '[cljwit.host :as host])
+
+;; Three lifetimes, three orders of magnitude apart (0014):
+(with-open [e (host/engine)                     ; process-wide, share it
+            a (host/compile e "component.wasm") ; milliseconds — cache it
+            i (host/instantiate a)]             ; ~0.06 ms — one per request is fine
+  ;; Exports are discovered from the component itself. Names are the exact
+  ;; WIT strings; keywords work where the name reads back as itself.
+  ((i "greet") "world")                          ; => "hello, world"
+  ((i "wasi:cli/run@0.2.3#run")))                ; interface functions too
+
+;; The guest can call *you*: imports are ordinary Clojure functions,
+;; and WASI capabilities are named explicitly or absent (deny-by-default).
+(host/instantiate a {:imports {"acme:log/sink@1.0.0#write" println}
+                     :wasi    {:inherit-stdout true :args ["-v"]}})
+```
+
+WIT values arrive as the Clojure data you would guess: `record` → map,
+`variant` → `[:tag payload]`, `enum` → keyword, `flags` → set, `option` →
+value-or-nil, `result` → `[:ok v]`/`[:err e]`, resources → `AutoCloseable`
+handles. The full mapping — and why it is not negotiable — is
+[`doc/design/0012`](doc/design/0012-wit-clojure-type-mapping.md).
 
 ## Why now
 

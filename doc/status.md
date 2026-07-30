@@ -3,35 +3,31 @@
 _Short by design, and printed at every session start — so findings live in
 `doc/design/`, plans in `doc/roadmap.md`, and only the present tense here._
 
-**Updated:** 2026-07-30 · **Phase:** S0 closed, entering S1 (pre-alpha, no compiler)
+**Updated:** 2026-07-30 · **Phase:** S1 delivered, closing (pre-alpha, no compiler)
 
 ## Next
 
-1. **Implement `0016` — `own<T>` handles.** `flags` and `tuple` now marshal,
-   so **4 of `dev/resources/zoo.wit`'s 8 exports are callable**; the other four
-   are resource methods. `0016` decides the shape (opaque `AutoCloseable`,
-   `close` as `try { drop } finally { delete }`, lowering an `own` transfers,
-   the instance closes outstanding handles before deleting its store) and
-   `borrow` is out of scope because it **cannot appear in a return position**.
-   **Done.** `cljwit.host` marshals every `0012` row that a component can
-   express today. What is left of `0012` is `map`, `list<T,N>`,
-   `stream`/`future` and `error-context`, none of which are in a shipped
-   release.
-3. **Host imports (`0017`).** The mechanism works — an FFM upcall stub reaches
-   Clojure from inside a component call (`bb spike-import`), pure Clojure, no C
-   shim. The API is designed and argued, and an adversarial review changed four
-   of its five decisions. Three findings that outlive the note: `add_wasip2`
-   without `wasmtime_context_set_wasi` **aborts the process** at the first WASI
-   call; an import that throws poisons the whole store, not just the call; and
-   wasmtime **frees** what the callback writes, so `lower-fn`'s Arena
-   allocation cannot be reused in that direction. Resource imports are inside
-   this unit, not after it — every `wasi:io` interface needs one.
-4. **`0012`'s `ex-data` contract.** It promises a WIT type name that reflection
-   cannot supply; `0015` declined to be the codegen layer that would, so the
-   contract has to shrink instead.
-5. **`require`-a-component is deferred, not pending** (`0015`). When it is
-   picked up it should be a generated `.clj`, not a macro, and the instance
-   should not be ambient.
+1. **Close S1 against its stop condition.** What remains of "a component this
+   project did not author, calling and being called, with every WIT type a
+   shipped release can express": the un-authored component (`zoo.wit`) is
+   *called*; the *calling* side is exercised only by guests this repo wrote.
+   One named capability gap: **a resource nested in a container in an
+   import's signature is refused at instantiate** (`:nested-resource`) rather
+   than marshalled — `import-stub` routes only whole parameters/results
+   through the rep table. Accepted until a real component needs the shape;
+   the first one that does reopens it.
+2. **The ergonomics layer (`0015` revisited).** Its blockers are gone —
+   marshalling and host imports both exist — so the generated-`.clj` shape
+   ("not a macro, and the instance not ambient") is buildable now. Decide
+   whether S1 ships with it or it opens S2.
+3. **S2 — developer experience skeleton** (`doc/roadmap.md`): `cljwit.edn`,
+   an nREPL entry point, the shadow-cljs shape.
+
+Done since the last update: `0016` `own<T>` handles, `0017` host imports
+(A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
+what reflection can supply, `0019` libwasmtime resolution for library users.
+What is left of `0012` is `map`, `list<T,N>`, `stream`/`future` and
+`error-context`, none of which a shipped release can express.
 
 ## Where we are
 
@@ -69,14 +65,19 @@ is unmeasured.** That is S0's residue and it belongs to S3.
 
 ### S1 — reaching a component
 
-**`cljwit.host` exists** (`src/cljwit/host.clj`, `0014`). Three lifetimes —
-engine, compiled artifact, instance — with exports discovered from the
-component itself: no WIT file and no code generation at run time. Names are the
-exact WIT strings, including `pkg:name/iface@ver#func` for functions inside an
-interface, with keyword aliases only where the name reads back equal to itself.
-Every entry into a store takes a non-concurrency check, and results are lifted
-eagerly. It marshals every `0012` row except `own`/`borrow`, `map`,
-`list<T,N>`, `stream`/`future` and `error-context`.
+**`cljwit.host` is delivered** (`src/cljwit/host.clj`, `0014`). Three
+lifetimes — engine, compiled artifact, instance — with exports discovered from
+the component itself: no WIT file and no code generation at run time. Names
+are the exact WIT strings, including `pkg:name/iface@ver#func` for functions
+inside an interface, with keyword aliases only where the name reads back equal
+to itself. Every entry into a store takes a non-concurrency check, and results
+are lifted eagerly. It marshals **every `0012` row a shipped release can
+express, in both directions**: exports and host imports (`0017`), resources in
+both ownerships — guest-defined handles as `AutoCloseable` (`0016`),
+host-defined resources with destructors (`0018`) — and WASI, deny-by-default
+(`0017` E). The one named gap is a resource nested in a container in an
+import's signature, refused at instantiate. `0019` gives library users a
+libwasmtime resolution order that does not require this repo's flake.
 
 **The calling convention is decided and the cost structure is measured**
 (`0011`, corrected by `0013`): `MethodHandleProxies/asInterfaceInstance` behind
