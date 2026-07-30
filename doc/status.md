@@ -20,19 +20,22 @@ _Short by design, and printed at every session start — so findings live in
    the watcher — waits for a compiler to serve, so:
 3. **S3's first vertical slice is landed** (`0022` decided the shape,
    `0023` the harness and representation): the differential oracle is in
-   the gate — `corpus/s3.edn` (21 scalar entries) runs through real
+   the gate — `corpus/s3.edn` (29 scalar entries) runs through real
    `clojure` (fresh namespace per entry) and through
    `cljwit.analyze` → `cljwit.emit` → `wasm-tools` → **wasmtime and V8,
-   in both modes** (which emit identical bytes until `def` lands — stated,
-   not hidden), with `corpus/trap_table.edn` row 1
+   in both modes** (which emit identical bytes until calls to def'd fns
+   land — stated, not hidden), with `corpus/trap_table.edn` row 1
    (`ArithmeticException` ↔ division trap) exercised. Representation
    pinned in `0023`: values are `(ref null eq)`, fixnums i31, nil = null,
    false/true = singleton structs, overflow arm `unreachable`. Still
    open, each with its benchmark named (`0022`): the dev-loop output
    format (before the nREPL unit), the boxed-i64 lane (before the
-   emitter grows past i31), the throw representation. Next unit:
-   **`loop`/`recur` entries and emission** (a block and a `br`, forces
-   nothing open), then `def` — which starts the real dev/prod divergence.
+   emitter grows past i31), the throw representation. `loop`/`recur` and
+   scalar `def` are in the corpus (29 entries); mode divergence has still
+   not started — it begins with *calls to* def'd fns (direct linking,
+   `0004`), so the next unit is **`fn`**: `0022` D's full contract —
+   multi-arity ships with it, varargs carry an explicit rest-mode — and
+   the first depth-sensitive entry brings the trap table its stack row.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

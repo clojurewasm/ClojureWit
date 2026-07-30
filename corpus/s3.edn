@@ -45,4 +45,12 @@
  {:id "let-shadow"      :forms [(let [x 1] (let [x (+ x 1)] (* x 10)))]}
  {:id "let-sequential"  :forms [(let [x 2 y (+ x 3)] (* x y))]}
  {:id "top-level-forms" :forms [(+ 1 1) (+ 2 2)]}
+ {:id "def-ref"         :forms [(def x 5) (+ x 1)]}
+ {:id "def-uses-def"    :forms [(def x 5) (def y (+ x 3)) (+ x y)]}
+ {:id "def-redef"       :forms [(def x 1) (def x 2) x]}
+ ;; A throwing re-def: both lanes abort the entry at form 2, and row 1
+ ;; licenses the comparison. That the old root survives (0022 D, the
+ ;; sibling's recorded bug) is unobservable until try/catch exists —
+ ;; claimed nowhere until it does.
+ {:id "def-redef-throws" :forms [(def x 5) (def x (quot 1 0)) x]}
  {:id "trap-div-zero"   :forms [(quot 1 0)]}]

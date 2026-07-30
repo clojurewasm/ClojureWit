@@ -50,7 +50,15 @@
         (refer-clojure)
         {:value (reduce (fn [_ f] (eval f)) nil forms)}
         (catch Throwable t
-          {:throw (.getName (class t)) :message (.getMessage t)})
+          ;; `eval` wraps a throw during a top-level form (a def init, say)
+          ;; in Compiler$CompilerException; what the program observably
+          ;; throws under `clojure` is the cause — clojure.main's own
+          ;; ex-triage reports the cause's class — so the oracle records it.
+          (let [t (if (and (instance? clojure.lang.Compiler$CompilerException t)
+                           (.getCause t))
+                    (.getCause t)
+                    t)]
+            {:throw (.getName (class t)) :message (.getMessage t)}))
         (finally (remove-ns ns-sym))))))
 
 (defn- assemble!

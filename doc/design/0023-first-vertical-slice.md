@@ -56,6 +56,12 @@ representation for everything the slice touches.
   compare with `=`. An oracle value that `pr-str`→`read-string` cannot
   round-trip is a corpus lint error (`0022` B.4) — this falls out of the
   mechanism rather than being a separate linter.
+- **The oracle records what the program observably throws**, not what
+  `eval` wraps it in: a throw during a top-level form (a `def` init, per
+  the first `def` entries) surfaces as `Compiler$CompilerException`, and
+  the oracle unwraps to its cause — the same triage `clojure.main`
+  performs before showing a user the error. Found by the harness itself
+  the day `def` landed, not designed in advance.
 
 ### The representation (the new pins)
 

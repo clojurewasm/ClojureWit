@@ -26,6 +26,16 @@
     (swap! local-decls conj (format "(local %s (ref null eq))" nm))
     nm))
 
+(defn- global-for!
+  "The module global backing a def'd var — one per var, declared null and
+   assigned at eval (`0022` D: declare at analysis, assign at eval)."
+  [{:keys [counter globals global-decls]} v]
+  (or (get @globals v)
+      (let [nm (str "$g" (swap! counter inc))]
+        (swap! global-decls conj (format "(global %s (mut (ref null eq)) (ref.null eq))" nm))
+        (swap! globals assoc v nm)
+        nm)))
+
 (declare emit-expr)
 
 (defn- emit-const [{:keys [type val] :as ast}]
@@ -136,8 +146,26 @@
     :local  (if-let [wl (get-in ctx [:locals (:name ast)])]
               (format "(local.get %s)" wl)
               (out-of-slice! (str "unresolved local " (:name ast)) ast))
+    :var    (if-let [g (get @(:globals ctx) (:var ast))]
+              (format "(global.get %s)" g)
+              (out-of-slice! (str "var " (:var ast) " has no global — only def'd vars are referenceable") ast))
+    :def    (out-of-slice! "def in expression position — its value is a var, which has no representation yet" ast)
     :invoke (emit-invoke ctx ast)
     (out-of-slice! (str "op " (:op ast)) ast)))
+
+(defn- emit-top-level
+  "A top-level statement: a def becomes a `global.set`; anything else is
+   an expression whose value is dropped."
+  [ctx ast]
+  (if (= :def (:op ast))
+    (if-let [init (:init ast)]
+      ;; The init is emitted before the var's global registers: a
+      ;; self-referential `(def y y)` must hit the loud unresolved-var
+      ;; error, not silently read the null the global was declared with.
+      (let [init-wat (emit-expr ctx init)]
+        (format "(global.set %s %s)" (global-for! ctx (:var ast)) init-wat))
+      (out-of-slice! "def without init — an unbound var has no edn representation" ast))
+    (format "(drop %s)" (emit-expr ctx ast))))
 
 (def ^:private runtime
   "  (type $Unit (struct))
@@ -179,13 +207,19 @@
    (`0023`)."
   [asts mode]
   {:pre [(#{:dev :prod} mode) (seq asts)]}
-  (let [ctx   {:locals {} :counter (atom 0) :local-decls (atom [])}
-        stmts (mapv #(emit-expr ctx %) (butlast asts))
-        ret   (emit-expr ctx (last asts))]
+  (let [ctx   {:locals {} :counter (atom 0) :local-decls (atom [])
+               :globals (atom {}) :global-decls (atom [])}
+        stmts (mapv #(emit-top-level ctx %) (butlast asts))
+        ;; The last form is the entry's result, so it cannot be a def —
+        ;; a def's value is the var itself, which is not a scalar.
+        ret   (if (= :def (:op (last asts)))
+                (out-of-slice! "a def cannot be an entry's last form — its value is a var" (last asts))
+                (emit-expr ctx (last asts)))]
     (str "(module\n"
          (format "  ;; mode %s — no divergence in the slice yet (0023)\n" (name mode))
          runtime
+         (str/join (map #(str "  " % "\n") @(:global-decls ctx)))
          "  (func $entry (export \"entry\") (result i64)\n"
          (str/join (map #(str "    " % "\n") @(:local-decls ctx)))
-         (str/join (map #(format "    (drop %s)\n" %) stmts))
+         (str/join (map #(str "    " % "\n") stmts))
          (format "    (i64.extend_i32_s (i31.get_s (ref.cast (ref i31) %s)))))\n" ret))))
