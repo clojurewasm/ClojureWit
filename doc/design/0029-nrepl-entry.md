@@ -33,9 +33,14 @@ honestly out of scope?
    shape — so session bookkeeping, `describe`, and unknown-op
    semantics come from `nrepl/nrepl` protocol-correct and for free.
    `clj -M:repl` starts it; the `-X` coordinate `0021` called
-   provisional is superseded by this. Verified with the nrepl client;
-   an editor connection is a manual check until someone performs it
-   *(review)*.
+   provisional is superseded by this. Verified with the nrepl client —
+   and then with a real editor *(the manual check, performed
+   2026-07-30)*: CIDER 2.1.0-snapshot on Emacs 31 connected via
+   `cider-connect-clj`, and through the live connection `(+ 1 2)` → 3,
+   `(def cider-x 30)` → `#'user/cider-x` with `(+ cider-x 12)` → 42 in
+   a *later* eval, `(cfib 20)` → 6765, and trap/out-of-slice outcomes
+   arrived on `err` — degraded (no cider-nrepl middleware) but exactly
+   as §1 predicted: eval works, nothing hangs.
 2. **One long-lived node child, `dev/repl_engine.mjs`** — started by
    the server, speaking one JSON line per message on stdio, strict
    request→response alternation. Two framing pins *(review)*: **the

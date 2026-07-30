@@ -91,7 +91,11 @@ _Short by design, and printed at every session start — so findings live in
    classify as errors, out-of-slice stays loud. The dev assembler
    entered `tools.json` and `bb check` materializes it (guarded
    `npm ci`) — `0026`'s promise kept on its named trigger. An editor
-   connection (CIDER/Calva) remains a manual check. **S4 is entered
+   connection is verified for real: **CIDER (2.1.0-snapshot, Emacs 31)
+   connected to `bb repl` and evaluated through the live pipe** —
+   cross-eval vars, `(cfib 20)` → 6765, trap and out-of-slice on
+   `err`; degraded without cider-nrepl middleware exactly as `0029` §1
+   predicted, nothing hangs (2026-07-30). **S4 is entered
    the way `/next`'s stage rule demands — by running what would fail
    if its premise were wrong**: `bb spike-s4` has the project's two
    deliverables meet for the first time — `cljwit` compiles
