@@ -16,9 +16,14 @@ _Short by design, and printed at every session start — so findings live in
    unit is done: **`cljwit.edn` exists** (`0021`, `cljwit.project`) —
    components keyed by namespace, `sync!` plans-then-writes, `status`
    reports tiered drift (`:stale`/`:modified`/`:missing`/`:orphans`), and
-   `check` is the CI verb. What remains of S2: the nREPL entry point and
-   the file watcher, both of which should decide the fate of the
-   provisional `-X` coordinate.
+   `check` is the CI verb. What remains of S2 — the nREPL entry point and
+   the watcher — waits for a compiler to serve, so:
+3. **S3 is entered** (`0022`, proposed): WAT-text emission through the
+   pinned toolchain, a CI-mandatory differential oracle against `clojure`
+   itself, i31-fixnum numerics with a throwing boxed i64. **The analyzer
+   choice is deliberately deferred** — the next unit is its survey: add
+   `tools.analyzer` and TeaVM to `refs.json`, read them, amend `0022`.
+   The sibling failures that shaped all of this are cited in the note.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
