@@ -18,24 +18,25 @@ _Short by design, and printed at every session start — so findings live in
    reports tiered drift (`:stale`/`:modified`/`:missing`/`:orphans`), and
    `check` is the CI verb. What remains of S2 — the nREPL entry point and
    the watcher — waits for a compiler to serve, so:
-3. **S3's first vertical slice is landed** (`0022` decided the shape,
-   `0023` the harness and representation): the differential oracle is in
-   the gate — `corpus/s3.edn` (29 scalar entries) runs through real
-   `clojure` (fresh namespace per entry) and through
+3. **Every S3 form now compiles and is oracle-checked** (`0023` the
+   harness, `0024` fn): `corpus/s3.edn` — 45 entries: literals, `if`,
+   `let`, `loop`/`recur`, `def`, `fn` with multi-arity, closures,
+   method-`recur`, higher-order calls — runs on every `bb check` through
+   real `clojure` (fresh namespace per entry) and through
    `cljwit.analyze` → `cljwit.emit` → `wasm-tools` → **wasmtime and V8,
-   in both modes** (which emit identical bytes until calls to def'd fns
-   land — stated, not hidden), with `corpus/trap_table.edn` row 1
-   (`ArithmeticException` ↔ division trap) exercised. Representation
-   pinned in `0023`: values are `(ref null eq)`, fixnums i31, nil = null,
-   false/true = singleton structs, overflow arm `unreachable`. Still
-   open, each with its benchmark named (`0022`): the dev-loop output
-   format (before the nREPL unit), the boxed-i64 lane (before the
-   emitter grows past i31), the throw representation. `loop`/`recur` and
-   scalar `def` are in the corpus (29 entries); mode divergence has still
-   not started — it begins with *calls to* def'd fns (direct linking,
-   `0004`), so the next unit is **`fn`**: `0022` D's full contract —
-   multi-arity ships with it, varargs carry an explicit rest-mode — and
-   the first depth-sensitive entry brings the trap table its stack row.
+   in both modes**. `(defn fib [n] …) (fib 20)` returns 6765 on both
+   engines — the roadmap's S3 sentence, minus an actual browser page.
+   **The modes now genuinely diverge**: `:prod` direct-links fn defs
+   (immutable constant global + plain `call`, `^:dynamic`/`^:redef`
+   excluded, re-`def` refused), `:dev` keeps var indirection; the
+   dev-only redef entry carries `:modes [:dev]` (`0024` §10). The trap
+   table has two exercised rows (division, stack exhaustion — depth
+   bands re-measured for the real frame shape, pin at 3,000). Varargs
+   analyze but refuse to emit until seqs exist. Still open, each with
+   its benchmark named (`0022`): the dev-loop output format (before the
+   nREPL unit), the **boxed-i64 lane** (before the emitter grows past
+   i31 — fib's n = 46…92 domain), the throw representation. Next unit:
+   **the boxed-i64 benchmark**, predictions first (`0002`'s rule).
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

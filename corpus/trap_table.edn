@@ -8,8 +8,15 @@
 ;; a division trap. All strings are observed, not recalled: the JVM's is
 ;; what `(quot 1 0)` actually throws, the engine strings verified
 ;; 2026-07-30 on the pinned toolchain (wasmtime 47.0.1, V8/node).
+;; Row 2 matches on class alone (:jvm-message "") — StackOverflowError's
+;; message is null, a recorded weakening of the jvm-message guard (0024).
 [{:row 1
   :class "java.lang.ArithmeticException"
   :jvm-message "/ by zero"
   :wasmtime "integer divide by zero"
-  :v8 "divide by zero"}]
+  :v8 "divide by zero"}
+ {:row 2
+  :class "java.lang.StackOverflowError"
+  :jvm-message ""
+  :wasmtime "call stack exhausted"
+  :v8 "Maximum call stack size exceeded"}]

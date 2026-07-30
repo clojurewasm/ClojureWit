@@ -53,4 +53,44 @@
  ;; sibling's recorded bug) is unobservable until try/catch exists —
  ;; claimed nowhere until it does.
  {:id "def-redef-throws" :forms [(def x 5) (def x (quot 1 0)) x]}
- {:id "trap-div-zero"   :forms [(quot 1 0)]}]
+ {:id "trap-div-zero"   :forms [(quot 1 0)]}
+ ;; --- fn (0024). An entry carries :modes when only one mode can
+ ;; express it; default is both.
+ {:id "fn-anon-call"    :forms [((fn [x y] (+ x y)) 2 3)]}
+ {:id "fn-zero-arity"   :forms [((fn [] 7))]}
+ {:id "fn-multi-arity"  :forms [(let [f (fn ([x] x) ([x y] (* x y)))]
+                                  (+ (f 5) (f 3 4)))]}
+ {:id "fn-closure"      :forms [(let [a 10] ((fn [x] (+ x a)) 5))]}
+ {:id "fn-closure-shared" :forms [(let [a 2]
+                                    (let [g (fn [x] (* a x))]
+                                      (+ (g 3) (g 4))))]}
+ ;; Partial shadowing: the outer x is captured, the inner x is not —
+ ;; exactly what uniquified free-variable computation exists for.
+ {:id "fn-capture-shadow" :forms [(let [x 1]
+                                    ((fn [y] (+ x (let [x 10] (+ x y)))) 5))]}
+ {:id "fn-named-fact"   :forms [((fn fact [n] (if (< n 2) 1 (* n (fact (- n 1))))) 10)]}
+ {:id "fn-method-recur" :forms [((fn [n acc] (if (< 0 n) (recur (- n 1) (+ acc n)) acc)) 10 0)]}
+ {:id "fn-higher-order" :forms [((fn [f x] (f (f x))) (fn [n] (+ n 3)) 10)]}
+ {:id "fn-def-call"     :forms [(def dbl (fn [x] (* 2 x))) (dbl 21)]}
+ {:id "fn-as-value"     :forms [(def dbl (fn [x] (* 2 x)))
+                                ((fn [g] (+ (g 3) (g 4))) dbl)]}
+ ;; The roadmap's S3 sentence, verbatim shape: defn fib runs everywhere.
+ {:id "fn-defn-fib"     :forms [(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+                                (fib 20)]}
+ ;; Depth pin: 3000 frames, ~2.8x under the shallowest measured band for
+ ;; this frame shape — wasmtime ~8-10k, V8 ~10.3-10.7k, the oracle JVM
+ ;; ~8.5-9.2k (0024 §9).
+ {:id "fn-depth-safe"   :forms [(defn down [n] (if (< 0 n) (down (- n 1)) 42))
+                                (down 3000)]}
+ ;; Deliberate exhaustion on every lane, including the oracle: trap row 2.
+ {:id "fn-stack-exhaust" :forms [(defn down [n] (if (< 0 n) (down (- n 1)) 42))
+                                 (down 10000000)]}
+ ;; Redefinition taking effect is the open world's point (0009); prod
+ ;; direct-links and refuses, so this entry is dev-only (0024 §10).
+ {:id "fn-redef-dev"    :modes [:dev]
+  :forms [(def f (fn [] 1)) (def f (fn [] 2)) (f)]}
+ ;; ^:redef opts out of direct linking in prod (0004's exclusion rule),
+ ;; so redefinition works in both modes.
+ {:id "fn-redef-marked" :forms [(def ^:redef f (fn [] 1))
+                                (def ^:redef f (fn [] 2))
+                                (f)]}]

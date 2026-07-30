@@ -14,6 +14,9 @@ const instance = new WebAssembly.Instance(
 try {
   console.log(`result ${instance.exports.entry()}`);
 } catch (e) {
-  if (e instanceof WebAssembly.RuntimeError) console.log(`trap ${e.message}`);
+  // V8 reports wasm stack exhaustion as RangeError, not RuntimeError
+  // (0024) — both are classified outcomes, not harness failures.
+  if (e instanceof WebAssembly.RuntimeError || e instanceof RangeError)
+    console.log(`trap ${e.message}`);
   else throw e;
 }

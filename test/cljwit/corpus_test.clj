@@ -138,7 +138,7 @@
 (deftest corpus-differential
   (when-not wasmtime-on-path?
     (println "wasmtime not on PATH — skipping the wasmtime corpus lane"))
-  (doseq [{:keys [id forms]} entries]
+  (doseq [{:keys [id forms modes]} entries]
     (let [oracle (oracle-eval forms)
           asts   (analyze/analyze-forms forms)]
       ;; The corpus lint (0022 B.4): a value the oracle cannot round-trip
@@ -146,7 +146,9 @@
       (when (contains? oracle :value)
         (is (= (:value oracle) (edn/read-string (pr-str (:value oracle))))
             (str id ": oracle value does not round-trip through edn — corpus lint")))
-      (doseq [mode [:dev :prod]]
+      ;; :modes restricts an entry to lanes that can express it — the
+      ;; dev-only fn-redef case, 0024 §10. Default is both.
+      (doseq [mode (or modes [:dev :prod])]
         (let [wasm (assemble! id mode (emit/emit-module asts mode))]
           (check-lane id mode :v8 oracle (v8-lane wasm))
           (when wasmtime-on-path?

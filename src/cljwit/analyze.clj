@@ -15,9 +15,16 @@
   (:refer-clojure :exclude [macroexpand-1])
   (:require [clojure.tools.analyzer :as ana]
             [clojure.tools.analyzer.env :refer [with-env]]
+            [clojure.tools.analyzer.passes :refer [schedule]]
+            [clojure.tools.analyzer.passes.uniquify :refer [uniquify-locals]]
             [clojure.tools.analyzer.utils :refer [resolve-sym]]))
 
 (set! *warn-on-reflection* true)
+
+;; Uniquify is the one scheduled pass: emission computes free variables
+;; and lexical scope by name, which partial shadowing would corrupt —
+;; `(let [x 1] (fn [] (+ x (let [x 2] x))))` has two locals both named x.
+(def ^:private run-passes (schedule #{#'uniquify-locals}))
 
 (defn- macroexpand-1
   "Only `:macro` vars expand; specials and locals shield; no `:inline`."
@@ -53,5 +60,5 @@
                   ana/parse         ana/-parse
                   ana/var?          var?]
           (with-env genv
-            (mapv #(ana/analyze % env) forms))))
+            (mapv #(run-passes (ana/analyze % env)) forms))))
       (finally (remove-ns ns-sym)))))
