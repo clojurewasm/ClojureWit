@@ -115,11 +115,17 @@ _Short by design, and printed at every session start — so findings live in
    conservative — hosts lift inside the call), **per-export
    trampolines** with the worked echo core signature pinned, slice
    order string-echo and `list<u8>` first — marshalling only, body is
-   identity. Next unit: **the echo slice** — the emitter grows
-   `memory` + `cabi_realloc` + string trampolines, round-tripped
-   against `cljwit.host` (80 assertions on the other side — the
-   survey said 87; the review measured). S2's watcher waits for
-   namespace loading, post-S3 compiler work either way.
+   identity. **The echo slice is landed** (`cljwit.component`,
+   `component_echo_test`): the guest side's first real marshalling —
+   `memory`, the bump-arena `cabi_realloc` (grow-last fast path,
+   non-last copy, `memory.grow`), entry reset, and the pinned
+   `(param i32 i32) (result i32)` trampoline — round-trips strings
+   against `cljwit.host` in the gate: ascii, multi-byte utf8, the
+   empty string, a 600 KB payload that forces `memory.grow`, and
+   back-to-back calls across the entry reset. Next unit:
+   **`list<u8>`** (`0030` §5's order), then flat records as the
+   memcpy-class case. S2's watcher waits for namespace loading,
+   post-S3 compiler work either way.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
