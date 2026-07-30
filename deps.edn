@@ -5,7 +5,10 @@
  {;; --- development -------------------------------------------------------
   :dev  {:extra-paths ["test" "dev"]
          :extra-deps  {io.github.cognitect-labs/test-runner
-                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}
+                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                       ;; bb spike-analyzer (0022 E): the S3 front-end survey's
+                       ;; executable half.
+                       org.clojure/tools.analyzer {:mvn/version "1.2.2"}}}
 
   ;; `clj -M:test` — the unit lane
   :test {:extra-paths ["test"]

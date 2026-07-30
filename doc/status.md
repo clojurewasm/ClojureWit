@@ -20,10 +20,13 @@ _Short by design, and printed at every session start — so findings live in
    the watcher — waits for a compiler to serve, so:
 3. **S3 is entered** (`0022`, proposed): WAT-text emission through the
    pinned toolchain, a CI-mandatory differential oracle against `clojure`
-   itself, i31-fixnum numerics with a throwing boxed i64. **The analyzer
-   choice is deliberately deferred** — the next unit is its survey: add
-   `tools.analyzer` and TeaVM to `refs.json`, read them, amend `0022`.
-   The sibling failures that shaped all of this are cited in the note.
+   itself, i31-fixnum numerics with a throwing boxed i64, and — the survey
+   ran same-day — **tools.analyzer core plus our own host layer** as the
+   front end, with clojure.core's macros reused directly (`:inline` off, a
+   two-entry leak table, host ops as free leak detectors).
+   `bb spike-analyzer` is the executable half. Next unit: fold the in-flight
+   adversarial review of `0022`, then the first vertical slice — corpus
+   harness + `(def x 42)` through analyze → emit → both engines.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

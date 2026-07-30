@@ -2,8 +2,11 @@
 
 **Status:** proposed · 2026-07-30 · the entry survey for S3, run against the
 sibling projects' recorded failures, the ClojureScript compiler's source, and
-the toolchain as it exists today. Three decisions are evidenced enough to
-make; the analyzer choice is not, and saying so is the point.
+the toolchain as it exists today. The first draft made three decisions and
+deferred the analyzer to a survey; the survey ran the same day (E, amended)
+and decided it — tools.analyzer core plus our own host layer, validated by
+`bb spike-analyzer`. An adversarial review of the whole note is in flight;
+`proposed` until it lands.
 
 ## The question
 
@@ -111,9 +114,63 @@ baseline.
   builds an open S3 decision (`0010`). The coverage report is a
   deliverable: it is the number S0's verdict rests on.
 
-### E. Deferred, with its survey named: the analyzer
+### E. The analyzer: tools.analyzer core, plus our own host layer
 
-The front end is the load-bearing choice and the evidence is not in yet.
+**Amended 2026-07-30, same day: the survey ran, and it decides.** Everything
+below the rule is the original deferral, kept because its reasoning shaped
+the survey. What the survey found (all read from source or executed;
+`bb spike-analyzer` is the committed, re-runnable half):
+
+- **tools.analyzer core is 827 lines, maintained (4466d93, 2026-02-15), and
+  host-agnostic by contract**: four dynamic vars (`macroexpand-1`, `parse`,
+  `create-var`, `var?` — `analyzer.clj:129-148`). Its `-parse` natively
+  handles every S3 form, already enforces the three JVM arity rules and the
+  declare-before-init `def` ordering that D requires, and its pass
+  scheduler (`passes.clj`: `:walk`/`:depends` metadata, same-walk fusion)
+  is the natural home for closure conversion, tail marking and boxing —
+  `collect-closed-overs` already exists.
+- **The host layer's cost is measured by example**: tools.analyzer.jvm is
+  3,172 lines, of which **58% is JVM reflection and class resolution that a
+  Wasm target simply does not have**; ~450 lines are the generic-host
+  pattern to adapt (ns map, macroexpansion, the Gilardi `do`-unrolling) and
+  ~680 are passes cljwit would write under *any* route.
+- **clojure.core's own macros are reusable directly — measured, with a
+  two-entry leak table.** With `:inline` **off** (the one deliberate
+  divergence from t.a.jvm's `macroexpand-1`), `defn`, `and`, `or`, `when`,
+  `->`, `loop` and vector destructuring expand into pure special forms and
+  core-var calls; `(+ x 1)` stays an `:invoke` of `#'clojure.core/+`, which
+  keeps `+`-vs-`+'` in cljwit's hands (C). The leaks: map destructuring's
+  kwargs branch touches `PersistentArrayMap` (needs a shim), and chunked
+  `doseq` (out of S3 scope). The host ops (`:host-call` etc.) double as
+  **free leak detectors**: any future macro that expands into interop fails
+  analysis mechanically.
+- **The spike ran, in this repo**: `bb spike-analyzer` analyzes
+  `(defn fib [n] …)` through bare tools.analyzer 1.2.2 with a ~40-line
+  host binding — top op `:def`, recursive `fib` resolves mid-parse, and
+  the distinct op set contains **zero host ops**.
+- The cljs fork's real cost is now counted: `core.cljc` defines 166
+  macros, and the S3-relevant ones it *re-implements* — `destructure`
+  (~140 lines), `let`, `loop`, `fn`, `defn`, `and`, `or` — are exactly
+  what the tools.analyzer route defers until a corpus line actually leaks.
+  TeaVM, read as the third emitter, independently confirms `0004`'s
+  three-loads-plus-`call_ref` vtable shape
+  (`WasmGCVirtualCallGenerator.java:56-79`).
+
+**Falsified by:** map-based pseudo-vars failing in passes (the spike
+interned real JVM vars; the next spike swaps in a map-returning
+`create-var` — the contract allows it, but it was not run); the leak table
+growing past shim scale once the corpus passes S3 (`case*`'s JVM hashing,
+`binding`, `lazy-seq` — if cljwit ends up owning ~20+ core macros, the
+cljs fork's macro layer stops being a differentiator and this reopens); a
+macro capturing a non-EDN JVM object into an expansion (mechanically
+detectable: a `:const` whose `:val` does not print); the scheduler proving
+unable to express the closure-conversion ordering.
+
+---
+
+*The original deferral, for the record:*
+
+The front end is the load-bearing choice and the evidence was not in yet.
 What is known (read from source, 2026-07-30, paths in `.ref/clojurescript`):
 
 - **cljs.analyzer is a fork, not a dependency.** The pipeline is
@@ -132,11 +189,9 @@ What is known (read from source, 2026-07-30, paths in `.ref/clojurescript`):
 - clj.wasm's author — the one person who tried this before — picked the
   cljs side (`.ref/clj.wasm/plan.md`).
 
-**The next unit is that survey**: add `tools.analyzer` (and TeaVM, the
-production JVM-hosted WasmGC emitter, reported browser-ready as of late
-2025 — secondary source only) to `refs.json`, read both, and decide in an
-amendment here. Deciding today on a recalled API would be `0013`'s failure
-shape — a claim about the tool, never run.
+**The next unit is that survey** — which is the amendment above: read
+both, run the spike, decide. Deciding on a recalled API would have been
+`0013`'s failure shape — a claim about the tool, never run.
 
 ## Alternatives rejected
 
@@ -145,8 +200,14 @@ shape — a claim about the tool, never run.
   a measured optimisation.
 - **An opt-in differential oracle.** The sibling measured what opt-in
   costs: weeks of silent drift.
-- **Deciding the analyzer now.** The strongest candidate's advantages are
-  recalled rather than read; see E.
+- **Deciding the analyzer on recall** (the note's own first draft, for a
+  few hours). The survey replaced recall with reads and a spike; see E.
+- **Forking cljs.analyzer.** Owning `destructure`/`let`/`loop`/`fn`/`defn`
+  from day one, for parse methods tools.analyzer also has; its 71 `js*`
+  bottoms in `core.cljc` are the JS target's, not ours.
+- **A purpose-built analyzer for the S3 subset.** Re-implements 827 lines
+  of subtle, maintained validation against the standing prefer-the-
+  ecosystem constraint.
 - **`--closed-world` in dev mode, or anywhere heap-sharing units exist** —
   already measured as a trap (`0009`, the `wat` skill).
 

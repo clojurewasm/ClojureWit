@@ -146,6 +146,9 @@
                                "-o" "target/imp.component.wasm")
                           (run "clojure" "-M:dev" "-m" "cljwit.spike.host-import"))}
 
+  spike-analyzer {:doc "Can bare tools.analyzer analyze S3's forms without host-op leaks? See 0022 E."
+                  :task (run "clojure" "-M:dev" "-m" "cljwit.spike.analyzer")}
+
   spike-reflect {:doc "Can a component describe itself at run time? See 0014."
                  :task (do (babashka.fs/create-dirs "target")
                            (run "wasm-tools" "parse" "dev/resources/echo.wat" "-o" "target/echo.core.wasm")
