@@ -66,9 +66,20 @@ resolution order).
 
 WIT values arrive as the Clojure data you would guess: `record` → map,
 `variant` → `[:tag payload]`, `enum` → keyword, `flags` → set, `option` →
-value-or-nil, `result` → `[:ok v]`/`[:err e]`, resources → `AutoCloseable`
-handles. The full mapping — and why it is not negotiable — is
+value-or-nil, `result` → `[:ok v]`/`[:err e]` (with `host/unwrap` as the
+opt-in throw-on-err sugar), resources → `AutoCloseable` handles. The full
+mapping — and why it is not negotiable — is
 [`doc/design/0012`](doc/design/0012-wit-clojure-type-mapping.md).
+
+Prefer names an editor can complete and clj-kondo can arity-check? Generate
+an ordinary namespace and check it in
+([`doc/design/0020`](doc/design/0020-generated-namespaces.md)):
+
+```clojure
+(require '[cljwit.host.gen :as gen])
+(gen/write-ns! "component.wasm" {:ns 'acme.component})
+;; => "src/acme/component.clj" — then: (acme.component/greet i "world")
+```
 
 ## Why now
 

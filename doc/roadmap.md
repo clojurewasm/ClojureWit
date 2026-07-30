@@ -83,11 +83,21 @@ gate red outside `nix develop`. When it is built it should be a generated
 exports are ordinary functions — is what S1 delivers instead (`0014`).
 
 **Stop condition.** A component this project did not author, calling and being
-called, with every WIT type a shipped release can express. Two of the three
-hold: `dev/resources/zoo.wit` is the un-authored component, and `0012`'s rows
-are marshalled in both directions except `map`, `list<T,N>`, `stream`/`future`
-and `error-context`, none of which are in a shipped release. Host imports are
-the third (`0017`).
+called, with every WIT type a shipped release can express.
+
+**Closed 2026-07-30, with two named residues.** Every `0012` row a shipped
+release can express marshals in both directions (`0016`–`0018`), the
+un-authored `zoo.wit` is called through reflection alone, and host imports,
+WASI and resources work in both ownerships. What did not close, recorded
+rather than rounded up:
+
+- **The calling side is exercised only by guests this repo wrote.** A real
+  third-party component that calls its host would take a Rust toolchain this
+  flake deliberately does not carry. The first such component to misbehave
+  against `cljwit.host` reopens this.
+- **A resource nested in a container in an import's signature** is refused at
+  instantiate (`:nested-resource`) rather than marshalled. The first real
+  component that needs the shape reopens it.
 
 ### S2 — Developer experience skeleton (weeks)
 

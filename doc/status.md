@@ -3,31 +3,29 @@
 _Short by design, and printed at every session start — so findings live in
 `doc/design/`, plans in `doc/roadmap.md`, and only the present tense here._
 
-**Updated:** 2026-07-30 · **Phase:** S1 delivered, closing (pre-alpha, no compiler)
+**Updated:** 2026-07-30 · **Phase:** S1 closed, entering S2 (pre-alpha, no compiler)
 
 ## Next
 
-1. **Close S1 against its stop condition.** What remains of "a component this
-   project did not author, calling and being called, with every WIT type a
-   shipped release can express": the un-authored component (`zoo.wit`) is
-   *called*; the *calling* side is exercised only by guests this repo wrote.
-   One named capability gap: **a resource nested in a container in an
-   import's signature is refused at instantiate** (`:nested-resource`) rather
-   than marshalled — `import-stub` routes only whole parameters/results
-   through the rep table. Accepted until a real component needs the shape;
-   the first one that does reopens it.
-2. **The ergonomics layer (`0015` revisited).** Its blockers are gone —
-   marshalling and host imports both exist — so the generated-`.clj` shape
-   ("not a macro, and the instance not ambient") is buildable now. Decide
-   whether S1 ships with it or it opens S2.
-3. **S2 — developer experience skeleton** (`doc/roadmap.md`): `cljwit.edn`,
-   an nREPL entry point, the shadow-cljs shape.
+1. **S1 is closed with two named residues** (`doc/roadmap.md` records them):
+   the calling side is exercised only by repo-authored guests — a real
+   third-party component reopens it — and a resource nested in a container
+   in an import's signature is refused at instantiate (`:nested-resource`)
+   rather than marshalled.
+2. **S2 — developer experience skeleton** (`doc/roadmap.md`): `cljwit.edn`,
+   an nREPL entry point, the shadow-cljs shape. `0020` opened it: the
+   generator's option keys (`:ns`, `:interface`, `:rename`, `:dir`) are
+   `cljwit.edn`'s keys, and the regenerate-and-diff drift check the
+   generated files cannot do for themselves belongs there.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
-what reflection can supply, `0019` libwasmtime resolution for library users.
-What is left of `0012` is `map`, `list<T,N>`, `stream`/`future` and
-`error-context`, none of which a shipped release can express.
+what reflection can supply, `0019` libwasmtime resolution for library users,
+`0020` generated namespaces (`cljwit.host.gen` — one tagged var per export,
+instance first, `host/unwrap` as the opt-in result sugar), `host/describe`,
+and the reflection delete contracts the headers require. What is left of
+`0012` is `map`, `list<T,N>`, `stream`/`future` and `error-context`, none of
+which a shipped release can express.
 
 ## Where we are
 
