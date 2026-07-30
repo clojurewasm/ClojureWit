@@ -12,11 +12,13 @@ _Short by design, and printed at every session start — so findings live in
    third-party component reopens it — and a resource nested in a container
    in an import's signature is refused at instantiate (`:nested-resource`)
    rather than marshalled.
-2. **S2 — developer experience skeleton** (`doc/roadmap.md`): `cljwit.edn`,
-   an nREPL entry point, the shadow-cljs shape. `0020` opened it: the
-   generator's option keys (`:ns`, `:interface`, `:rename`, `:dir`) are
-   `cljwit.edn`'s keys, and the regenerate-and-diff drift check the
-   generated files cannot do for themselves belongs there.
+2. **S2 — developer experience skeleton** (`doc/roadmap.md`). Its first
+   unit is done: **`cljwit.edn` exists** (`0021`, `cljwit.project`) —
+   components keyed by namespace, `sync!` plans-then-writes, `status`
+   reports tiered drift (`:stale`/`:modified`/`:missing`/`:orphans`), and
+   `check` is the CI verb. What remains of S2: the nREPL entry point and
+   the file watcher, both of which should decide the fate of the
+   provisional `-X` coordinate.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

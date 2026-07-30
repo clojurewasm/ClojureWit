@@ -81,6 +81,22 @@ an ordinary namespace and check it in
 ;; => "src/acme/component.clj" — then: (acme.component/greet i "world")
 ```
 
+With more than one component, declare them once in `cljwit.edn` at the
+project root and let `cljwit.project` reconcile
+([`doc/design/0021`](doc/design/0021-cljwit-edn.md)):
+
+```clojure
+;; cljwit.edn
+{:components {acme.resize {:wasm "components/resize.wasm"}}}
+```
+
+```clojure
+(require '[cljwit.project :as project])
+(project/sync!)    ; regenerate what changed
+(project/check)    ; CI: throw if anything drifted — stale, edited,
+                   ; missing, or orphaned
+```
+
 ## Why now
 
 Three things landed that were not true a year ago:
