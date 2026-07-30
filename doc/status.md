@@ -70,10 +70,19 @@ _Short by design, and printed at every session start — so findings live in
    ran in a real Chrome tab — `fn-defn-fib` printed `result 6765` and
    `throw-add-overflow` printed `exn 1`, the same vocabulary as the
    node runner (2026-07-30; serve the repo root, the page header says
-   how). Next unit: **S2's nREPL entry point**, unblocked on both
-   sides — the shadow-cljs shape from `doc/roadmap.md`, with the
-   dev-loop pieces decided (`0026` assembler, `0009` open world,
-   `0027` tag import/export arriving with the shared runtime).
+   how). **Dev-mode linking is built and oracle-checked** (`0028`):
+   one runtime module per session, one module per form importing
+   `"rt"` and the session vars it reads, exporting the ones it defs —
+   the corpus's third compiled lane runs every entry as a real session
+   (form 2 reads form 1's `def`, fn values cross modules, a
+   cross-module throw classifies through the imported tag). The review
+   caught a real blocker before it shipped: per-module K broke
+   cross-form fn values, so linked K is a session constant, 20 —
+   Clojure's own ceiling (`0028` §2a, `0024` amended). The wasmtime
+   linked lane is deferred on cost, not capability (`--preload` works;
+   recorded). Next unit: **S2's nREPL entry point** — the shadow-cljs
+   shape from `doc/roadmap.md`, every prerequisite now decided and
+   the session runner already the shape the server drives.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to

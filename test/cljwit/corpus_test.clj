@@ -61,17 +61,23 @@
             {:throw (.getName (class t)) :message (.getMessage t)}))
         (finally (remove-ns ns-sym))))))
 
-(defn- assemble!
-  "WAT text -> .wasm on disk, via wasm-tools. Returns the .wasm path."
-  [id mode wat-text]
-  (let [dir  (doto (io/file target-dir) (.mkdirs))
-        wat  (io/file dir (str id "." (name mode) ".wat"))
-        wasm (io/file dir (str id "." (name mode) ".wasm"))]
+(defn- assemble-at!
+  "WAT text -> .wasm at the given basename (dir + name, no extension),
+   via wasm-tools. Returns the .wasm path."
+  [^java.io.File dir base wat-text]
+  (.mkdirs dir)
+  (let [wat  (io/file dir (str base ".wat"))
+        wasm (io/file dir (str base ".wasm"))]
     (spit wat wat-text)
     (let [{:keys [exit err]} (sh "wasm-tools" "parse" (str wat) "-o" (str wasm))]
       (when-not (zero? exit)
-        (throw (ex-info (str "wasm-tools parse failed for " id) {:err err}))))
+        (throw (ex-info (str "wasm-tools parse failed for " base) {:err err}))))
     (str wasm)))
+
+(defn- assemble!
+  "WAT text -> .wasm on disk, via wasm-tools. Returns the .wasm path."
+  [id mode wat-text]
+  (assemble-at! (io/file target-dir) (str id "." (name mode)) wat-text))
 
 (defn- wasmtime-lane [wasm]
   (let [{:keys [exit out err]} (sh "wasmtime" "run" "--invoke" "entry" wasm)]
@@ -79,9 +85,10 @@
       {:value (str/trim (last (str/split-lines out)))}
       {:trap err})))
 
-(defn- v8-lane [wasm]
-  (let [{:keys [exit out err]} (sh "node" "corpus/run.mjs" wasm)
-        line (str/trim out)]
+(defn- node-outcome
+  "Parses the corpus vocabulary (result/trap/exn) a node runner prints."
+  [{:keys [exit out err]}]
+  (let [line (str/trim out)]
     (cond
       (not (zero? exit))
       (throw (ex-info "the node corpus lane itself failed" {:err err}))
@@ -90,6 +97,20 @@
       ;; An uncaught Clojure throw, class-precise on this lane (0027).
       (str/starts-with? line "exn ")    {:exn (parse-long (subs line 4))}
       :else (throw (ex-info (str "unrecognized corpus lane output: " (pr-str line)) {})))))
+
+(defn- v8-lane [wasm]
+  (node-outcome (sh "node" "corpus/run.mjs" wasm)))
+
+(defn- linked-lane
+  "The linked dev-mode session (0028): one runtime instance, one module
+   per form, the var ledger threaded by corpus/session.mjs."
+  [id asts]
+  (let [{:keys [runtime forms]} (emit/emit-linked-session asts)
+        dir   (io/file target-dir "linked" id)
+        rt    (assemble-at! dir "rt" runtime)
+        paths (into [rt]
+                    (map-indexed (fn [i wat] (assemble-at! dir (str "form" i) wat)) forms))]
+    (node-outcome (apply sh "node" "corpus/session.mjs" paths))))
 
 ;; --- comparison -------------------------------------------------------------
 
@@ -176,4 +197,8 @@
         (let [wasm (assemble! id mode (emit/emit-module asts mode))]
           (check-lane id mode :v8 oracle (v8-lane wasm))
           (when wasmtime-on-path?
-            (check-lane id mode :wasmtime oracle (wasmtime-lane wasm))))))))
+            (check-lane id mode :wasmtime oracle (wasmtime-lane wasm)))))
+      ;; The linked dev session (0028): every entry's :forms vector is a
+      ;; session — each form its own module over one shared runtime.
+      (when (contains? (set (or modes [:dev :prod])) :dev)
+        (check-lane id :linked :v8 oracle (linked-lane id asts))))))

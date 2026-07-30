@@ -47,20 +47,70 @@ const run = (bin) => {
   }
 };
 
-let n = 0, agree = 0;
-for (const f of readdirSync(dir).filter((f) => f.endsWith(".wat")).sort()) {
-  const wat = readFileSync(join(dir, f), "utf8");
-  const reference = new Uint8Array(readFileSync(join(dir, f.replace(/\.wat$/, ".wasm"))));
+const assemble = (wat) => {
   const mod = binaryen.parseText(wat);
   mod.setFeatures(FEATS);
   const bin = mod.emitBinary();
   mod.dispose();
+  return bin;
+};
+
+let n = 0, agree = 0;
+for (const f of readdirSync(dir).filter((f) => f.endsWith(".wat")).sort()) {
+  const wat = readFileSync(join(dir, f), "utf8");
+  const reference = new Uint8Array(readFileSync(join(dir, f.replace(/\.wat$/, ".wasm"))));
   const a = run(reference);
-  const b = run(bin);
+  const b = run(assemble(wat));
   n++;
   if (a === b) agree++;
   else console.log(`DISAGREE ${f}\n  wasm-tools: ${a}\n  binaryen:   ${b}`);
 }
 
-console.log(`${agree}/${n} modules agree (binaryen.js ${binaryen.version ?? "?"})`);
+// The linked sessions (0028): each target/corpus/linked/<id>/ is one
+// session — rt + formN in order — run once from wasm-tools' binaries
+// and once re-assembled by binaryen, same vocabulary as session.mjs.
+const runSession = (bins) => {
+  try {
+    const rt = new WebAssembly.Instance(new WebAssembly.Module(bins[0]), {});
+    const tag = rt.exports["clj-exn"];
+    const vars = {};
+    let last;
+    for (const bin of bins.slice(1)) {
+      const inst = new WebAssembly.Instance(new WebAssembly.Module(bin), { rt: rt.exports, vars });
+      for (const [name, val] of Object.entries(inst.exports)) {
+        if (name === "entry") continue;
+        if (name in vars) return `ERROR duplicate var export ${name}`;
+        vars[name] = val;
+      }
+      try {
+        last = inst.exports.entry();
+      } catch (e) {
+        if (e instanceof WebAssembly.Exception && e.is(tag))
+          return `exn ${rt.exports.exn_class(e.getArg(tag, 0))}`;
+        if (e instanceof WebAssembly.RuntimeError || e instanceof RangeError)
+          return `trap ${e.message}`;
+        throw e;
+      }
+    }
+    return `result ${last}`;
+  } catch (e) {
+    return `ERROR ${e.message}`;
+  }
+};
+
+const linkedRoot = join(dir, "linked");
+if (existsSync(linkedRoot)) {
+  for (const session of readdirSync(linkedRoot).sort()) {
+    const sdir = join(linkedRoot, session);
+    const wats = readdirSync(sdir).filter((f) => f.endsWith(".wat"))
+      .sort((x, y) => (x === "rt.wat" ? -1 : y === "rt.wat" ? 1 : x.localeCompare(y, "en", { numeric: true })));
+    const a = runSession(wats.map((f) => new Uint8Array(readFileSync(join(sdir, f.replace(/\.wat$/, ".wasm"))))));
+    const b = runSession(wats.map((f) => assemble(readFileSync(join(sdir, f), "utf8"))));
+    n++;
+    if (a === b) agree++;
+    else console.log(`DISAGREE linked/${session}\n  wasm-tools: ${a}\n  binaryen:   ${b}`);
+  }
+}
+
+console.log(`${agree}/${n} modules+sessions agree (binaryen.js)`);
 process.exit(agree === n ? 0 : 1);

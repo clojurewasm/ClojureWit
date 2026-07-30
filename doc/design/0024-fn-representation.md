@@ -33,7 +33,12 @@ mode-divergently, since until now both modes emitted identical modules.
    the classified out-of-contract trap, not emit a `struct.get` on a
    field that does not exist. Per-arity slots are `0004`'s measured
    shape — collapsing them to one funcref was measured there and
-   rejected for 0.11 ns; the structure stands.
+   rejected for 0.11 ns; the structure stands. *(Amended 2026-07-30,
+   same day: per-module K is a **self-contained-module** property.
+   `0028`'s review probed the linked dev world and per-module K makes
+   cross-form fn values trap — different K, different rec group,
+   different type. Linked dev mode fixes K at 20, Clojure's own
+   positional ceiling; `0028` §2a is the decision.)*
 3. **Each capture signature is its own subtype of `$Fn`, in its own rec
    group** (`0009`'s identity rule: unit-private types must not perturb
    shared groups). The callee's prologue casts parameter 0 to its leaf

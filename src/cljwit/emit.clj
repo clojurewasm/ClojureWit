@@ -45,11 +45,25 @@
 
 (defn- global-for!
   "The module global backing a def'd var — one per var, declared null and
-   assigned at eval (`0022` D: declare at analysis, assign at eval)."
-  [{:keys [counter globals global-decls]} v]
+   assigned at eval (`0022` D: declare at analysis, assign at eval).
+
+   Linked dev mode (`0028`): a var already known to the session imports
+   the first definer's canonical global and never re-exports it; a new
+   var declares its own global and exports it under the qualified name.
+   Import declarations go to their own list — the text format requires
+   imports before definitions."
+  [{:keys [counter globals global-decls import-decls linked]} v]
   (or (get @globals v)
       (let [nm (str "$g" (swap! counter inc))]
-        (swap! global-decls conj (format "(global %s (mut (ref null eq)) (ref.null eq))" nm))
+        (if (and linked (contains? (:known linked) (str (symbol v))))
+          (swap! import-decls conj
+                 (format "(import \"vars\" %s (global %s (mut (ref null eq))))"
+                         (pr-str (str (symbol v))) nm))
+          (do (swap! global-decls conj
+                     (format "(global %s (mut (ref null eq)) (ref.null eq))" nm))
+              (when linked
+                (swap! global-decls conj
+                       (format "(export %s (global %s))" (pr-str (str (symbol v))) nm)))))
         (swap! globals assoc v nm)
         nm)))
 
@@ -304,6 +318,11 @@
                  (format "(global.get %s)" (:global (get @(:direct ctx) (:var ast))))
                  (get @(:globals ctx) (:var ast))
                  (format "(global.get %s)" (get @(:globals ctx) (:var ast)))
+                 ;; Linked dev mode: a var an earlier form defined
+                 ;; imports the session's canonical global (0028).
+                 (and (:linked ctx)
+                      (contains? (get-in ctx [:linked :known]) (str (symbol (:var ast)))))
+                 (format "(global.get %s)" (global-for! ctx (:var ast)))
                  :else
                  (out-of-slice! (str "var " (:var ast) " has no global — only def'd vars are referenceable") ast))
     :def       (out-of-slice! "def in expression position — its value is a var, which has no representation yet" ast)
@@ -521,3 +540,86 @@
          ;; $unbox accepts both numeric representations; a non-number
          ;; result traps its cast — 0022 B.3's scalar rule, mechanically.
          (format "    (call $unbox %s)))\n" ret))))
+
+;; --- linked dev mode (0028) ---------------------------------------------------
+
+(def ^:private session-k
+  ;; Clojure's own 20-positional-param ceiling. Per-module K would make
+  ;; cross-form fn values trap: different K, different rec group,
+  ;; different type (0009; 0028 §2a — probed by review).
+  20)
+
+(def ^:private runtime-module
+  ;; The session runtime, instantiated once per session (0028 §1). The
+  ;; nominal pieces export by name; types cross by structure.
+  (str "(module\n" runtime
+       (apply str (for [f ["truthy" "unbox" "box" "add" "sub" "mul" "quot" "lt"]]
+                    (format "  (export \"%s\" (func $%s))\n" f f)))
+       "  (export \"true\" (global $true))\n"
+       "  (export \"false\" (global $false))\n"
+       ")\n"))
+
+(def ^:private rt-imports
+  ;; Imports must precede every definition in the text format; var
+  ;; imports (collected during emission) follow this block directly.
+  "  (type $BoxI64 (struct (field $v i64)))
+  (import \"rt\" \"clj-exn\" (tag $clj-exn (param (ref null eq))))
+  (import \"rt\" \"truthy\" (func $truthy (param (ref null eq)) (result i32)))
+  (import \"rt\" \"unbox\" (func $unbox (param (ref null eq)) (result i64)))
+  (import \"rt\" \"box\" (func $box (param i64) (result (ref eq))))
+  (import \"rt\" \"add\" (func $add (param (ref null eq)) (param (ref null eq)) (result (ref eq))))
+  (import \"rt\" \"sub\" (func $sub (param (ref null eq)) (param (ref null eq)) (result (ref eq))))
+  (import \"rt\" \"mul\" (func $mul (param (ref null eq)) (param (ref null eq)) (result (ref eq))))
+  (import \"rt\" \"quot\" (func $quot (param (ref null eq)) (param (ref null eq)) (result (ref eq))))
+  (import \"rt\" \"lt\" (func $lt (param (ref null eq)) (param (ref null eq)) (result (ref eq))))
+  (import \"rt\" \"true\" (global $true (ref eq)))
+  (import \"rt\" \"false\" (global $false (ref eq)))
+")
+
+(defn- emit-form-module
+  "One linked dev-mode form: imports the runtime and the session vars it
+   reads, exports the vars it newly defs (`0028`). A def form's entry is
+   a statement; an expression form's entry returns i64 through $unbox."
+  [ast known]
+  (let [k    (when (max-arity-used [ast]) session-k)
+        ctx  {:locals {} :counter (atom 0) :local-decls (atom [])
+              :globals (atom {}) :global-decls (atom []) :import-decls (atom [])
+              :direct (atom {}) :module-funcs (atom []) :fn-types (atom [])
+              :declared-funcs (atom []) :max-arity (atom k) :mode :dev
+              :linked {:known known}}
+        def? (= :def (:op ast))
+        body (if def? (emit-def ctx ast) (emit-expr ctx ast))]
+    (str "(module\n"
+         "  ;; linked dev form (0028) — session K, shared runtime\n"
+         rt-imports
+         (str/join (map #(str "  " % "\n") @(:import-decls ctx)))
+         (when k (fn-base-types k))
+         (str/join @(:fn-types ctx))
+         (str/join (map #(str "  " % "\n") @(:global-decls ctx)))
+         (str/join @(:module-funcs ctx))
+         (when-let [fs (seq @(:declared-funcs ctx))]
+           (format "  (elem declare func %s)\n" (str/join " " fs)))
+         (if def?
+           (str "  (func $entry (export \"entry\")\n"
+                (str/join (map #(str "    " % "\n") @(:local-decls ctx)))
+                "    " body "))\n")
+           (str "  (func $entry (export \"entry\") (result i64)\n"
+                (str/join (map #(str "    " % "\n") @(:local-decls ctx)))
+                (format "    (call $unbox %s)))\n" body))))))
+
+(defn emit-linked-session
+  "`0028`: one shared runtime module plus one module per form. Returns
+   {:runtime wat :forms [wat …]}. The instantiator holds the runtime
+   ledger; this is its compile-time half — later forms import the vars
+   earlier forms exported."
+  [asts]
+  {:pre [(seq asts)]}
+  (loop [asts (seq asts) known #{} forms []]
+    (if-not asts
+      {:runtime runtime-module :forms forms}
+      (let [ast    (first asts)
+            wat    (emit-form-module ast known)
+            known' (if (= :def (:op ast))
+                     (conj known (str (symbol (:var ast))))
+                     known)]
+        (recur (next asts) known' (conj forms wat))))))
