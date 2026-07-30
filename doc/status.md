@@ -151,7 +151,7 @@ minimum, set for WASI 0.3, is also the component minimum; do not lower it.
 
 ## Incidents so far
 
-Nine, all on 2026-07-29/30 — the first two days. Each is written up where it
+Fifteen, all on 2026-07-29/30 — the first two days. Each is written up where it
 changed something; this is the index.
 
 - **The gate passed locally and failed in CI** — empty `src/` and `test/` that
@@ -189,10 +189,38 @@ changed something; this is the index.
   incident, after the untracked empty directories — and the lesson is that a
   flake change is a CI change.
 
-**Four of the six are the same failure**: generalising from an experiment that
-varied more than one thing. The rule for it was added the same day and did not
-prevent the next occurrence. **What has caught it every time is an independent
-reviewer with fresh context**, which is worth more than the rule.
+- **A reflective `MemorySegment.get` became the headline number of two design
+  notes.** `(def ^:private I32 ValueLayout/JAVA_INT)` with no type hint made
+  the result read in a benchmark loop resolve reflectively, at ~1470 ns a
+  call — so `0011` attributed ~1.57 µs to wasmtime and `0013` built a
+  seven-row elimination table on top of it. Both retracted. Mechanized: `bb
+  reflection` is in the gate and found eleven more sites. `clj-kondo` does not
+  catch it and `*warn-on-reflection*` was off everywhere.
+- **`wasmtime_component_val_delete` on a result aborts the JVM on the *second*
+  call.** Every single call succeeded and each of fourteen exports passed when
+  tested alone. Recorded in `0014` E.
+- **The host silently dropped every function a real WASI world has.**
+  `instantiate` walked only top-level exports, so interface functions did not
+  appear and nothing said so. `0014`'s own retrospective had predicted exactly
+  this shape of failure about itself.
+- **`Instance/close` leaked the store, twice, one level apart.** Fixed once by
+  reordering the in-call check; the same shape survived in the handle loop
+  inside the guarded block and was found by a review.
+- **A truncated view of a source, read as the whole — three times.** Two greps
+  whose `[a-z_]` class silently excluded digits (`tuple_type_types_count`,
+  `VALTYPE_S8`, `add_wasip2`), and a typedef whose return type was one line
+  above the match, which cost a JVM crash and two turns of looking in the wrong
+  place. `/survey` carries both halves now.
+- **A design note asserted a mechanism that does not exist.** `0018`'s first
+  draft called it measured that a reflected valtype compares equal to a
+  host-registered resource type. It compares 0. Deferred, then rewritten.
+
+**Five of the fifteen are one failure**: generalising from an experiment that
+varied more than one thing. **Three more are its sibling** — reading a
+truncated view of a source and treating it as the whole. Rules were added for
+both the same day they appeared and neither prevented the next occurrence.
+**What has caught them every time is an independent reviewer with fresh
+context**, which is worth more than the rules.
 
 ## Deliberately not built
 
