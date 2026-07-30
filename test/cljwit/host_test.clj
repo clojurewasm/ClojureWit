@@ -512,3 +512,49 @@
                 (is (= 0 ((i "argc")))
                     "no :args means no arguments, not the host's")))))
         (finally (.delete ^File f))))))
+
+(deftest host-defined-resources
+  ;; `0018`. The mechanism is `bb spike-hres`; this is the API over it.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping host-resource test")
+    (let [f (build-component! "hres")]
+      (try
+        (with-open [e (host/engine)]
+          (with-open [a (host/compile e (io/file f))]
+
+            (testing "0018 A/B — a resource the host defines, minted and read back"
+              (let [dropped (atom [])]
+                (with-open [i (host/instantiate
+                               a {:resources {"local:hres/host@0.1.0#token"
+                                              {:drop (fn [v] (swap! dropped conj v))}}
+                                  :imports {"local:hres/host@0.1.0#mint"
+                                            (fn [v] {:n v})
+                                            "local:hres/host@0.1.0#peek"
+                                            (fn [t] (:n t))}})]
+                  (is (= 42 ((i "run") 42))
+                      "the guest minted, borrowed and dropped a host resource")
+                  (is (= [{:n 42}] @dropped)
+                      "and :drop saw the value the import returned, not a rep"))))
+
+            (testing "a borrow hands over the value, and identity is the rep"
+              ;; Two mints of the same object are two resources, so two drops.
+              (let [dropped (atom [])
+                    same {:n 1}]
+                (with-open [i (host/instantiate
+                               a {:resources {"local:hres/host@0.1.0#token"
+                                              {:drop (fn [v] (swap! dropped conj v))}}
+                                  :imports {"local:hres/host@0.1.0#mint" (fn [_] same)
+                                            "local:hres/host@0.1.0#peek" (fn [t] (:n t))}})]
+                  ((i "run") 7)
+                  ((i "run") 7)
+                  (is (= [same same] @dropped)
+                      ":drop is per handle, not per value"))))
+
+            (testing "a resource the component does not declare is a typo"
+              (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                                    (host/instantiate
+                                     a {:resources {"local:hres/host@0.1.0#nope" {:drop identity}}
+                                        :imports {"local:hres/host@0.1.0#mint" (fn [_] nil)
+                                                  "local:hres/host@0.1.0#peek" (fn [_] 0)}})))]
+                (is (= :no-such-resource (:cljwit/error (ex-data ex))))))))
+        (finally (.delete ^File f))))))

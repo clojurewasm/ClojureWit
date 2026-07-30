@@ -38,7 +38,8 @@
 (def ^:private ITEM 24)       ; wasmtime_component_item_t, kind at 0, union at 8
 (def ^:private ITEM-OF 8)
 (def ^:private ITEM-FUNC 3)   ; WASMTIME_COMPONENT_ITEM_COMPONENT_FUNC
-(def ^:private ITEM-IFACE 1)  ; ...COMPONENT_INSTANCE — a WIT interface
+(def ^:private ITEM-IFACE 1)
+(def ^:private ITEM-RESOURCE 4)  ; ...COMPONENT_INSTANCE — a WIT interface
 (def ^:private VT-OF 8)       ; ...its union: one pointer to the specific type
 (def ^:private RES-OK 8)      ; wasmtime_component_valresult_t {bool; val *}
 (def ^:private RES-VAL 16)
@@ -176,7 +177,16 @@
                                        (into-array java.lang.foreign.Linker$Option [])))
      :linker-root   (b "wasmtime_component_linker_root" ADDR ADDR)
      :li-add-inst   (b "wasmtime_component_linker_instance_add_instance" ADDR ADDR ADDR I64 ADDR)
-     :li-add-func   (b "wasmtime_component_linker_instance_add_func" ADDR ADDR ADDR I64 ADDR ADDR ADDR)}))
+     :li-add-func   (b "wasmtime_component_linker_instance_add_func" ADDR ADDR ADDR I64 ADDR ADDR ADDR)
+     :li-add-res    (b "wasmtime_component_linker_instance_add_resource" ADDR ADDR ADDR I64 ADDR ADDR ADDR ADDR)
+     :rty-new-host  (b "wasmtime_component_resource_type_new_host" ADDR I32)
+     :rty-equal     (b "wasmtime_component_resource_type_equal" ValueLayout/JAVA_BOOLEAN ADDR ADDR)
+     :rty-clone     (b "wasmtime_component_resource_type_clone" ADDR ADDR)
+     :hres-new      (b "wasmtime_component_resource_host_new" ADDR ValueLayout/JAVA_BOOLEAN I32 I32)
+     :hres-rep      (b "wasmtime_component_resource_host_rep" I32 ADDR)
+     :hres-delete   (b "wasmtime_component_resource_host_delete" nil ADDR)
+     :hres-to-any   (b "wasmtime_component_resource_host_to_any" ADDR ADDR ADDR ADDR)
+     :any-to-hres   (b "wasmtime_component_resource_any_to_host" ADDR ADDR ADDR ADDR)}))
 
 (defn- cstr [^Arena arena ^String t]
   (let [b (.getBytes t "UTF-8")
@@ -562,6 +572,14 @@
             :variant (mapcat (fn [[_ t]] (unsupported t)) (:cases tree))
             [(:kind tree)])))
 
+(definterface ResourceDtor
+  ;; Returns wasmtime_error_t*, not void. Declaring it void makes wasmtime read
+  ;; a garbage register as an error pointer and crash walking it, *after* the
+  ;; destructor has already run correctly (0018).
+  (^java.lang.foreign.MemorySegment
+   call [^java.lang.foreign.MemorySegment data ^java.lang.foreign.MemorySegment ctx
+         ^int rep]))
+
 (definterface ImportCallback
   (^java.lang.foreign.MemorySegment
    call [^java.lang.foreign.MemorySegment data
@@ -584,7 +602,7 @@
   [tree]
   (cond
     (nil? tree) nil
-    (keyword? tree) (when-not (SCALAR tree) [tree])
+    (keyword? tree) (when-not (or (SCALAR tree) (#{:own :borrow} tree)) [tree])
     :else (case (:kind tree)
             :list (unimportable (:element tree))
             :tuple (mapcat unimportable (:types tree))
@@ -600,10 +618,36 @@
   "One FFM upcall stub for one host import. Lifts the arguments, calls `f`,
    lowers the result, and converts anything thrown into a wasmtime error --
    a JVM exception unwinding through native frames exits the VM (0017 D)."
-  [api ^Arena arena sig f nm dead]
-  (let [lifts  (mapv (fn [[_ t]] (lift-fn t nil)) (:params sig))
+  [api ^Arena arena sig f nm dead rtab]
+  ;; A host resource in an import's signature is one this instance declared,
+   ;; so `:own`/`:borrow` here mean the rep table rather than a guest handle.
+   ;; One host resource type per instance for now — the tag is fixed at 1.
+  (let [hres-lift (fn [^MemorySegment seg]
+                    (let [any ^MemorySegment (.get seg ADDR (long UNION))
+                          out ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
+                      (ok! api "any_to_host" (invoke (:any-to-hres api) (:ctx rtab) any out))
+                      (let [hr ^MemorySegment (.get out ADDR (long 0))
+                            rep (invoke (:hres-rep api) hr)]
+                        (invoke (:hres-delete api) hr)
+                        (first (get @(:table rtab) rep)))))
+        lifts  (mapv (fn [[_ t]] (if (contains? #{:own :borrow} t)
+                                   hres-lift
+                                   (lift-fn t nil)))
+                     (:params sig))
         rt     (:result sig)
-        lower  (some-> rt lower-fn)
+        lower  (cond
+                 (nil? rt) nil
+                 (= :own rt)
+                 (fn [_ ^MemorySegment seg v]
+                   (let [rep (swap! (:next rtab) inc)
+                         _   (swap! (:table rtab) assoc rep [v])
+                         hr ^MemorySegment (invoke (:hres-new api) true (int rep) (int 1))
+                         out ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
+                     (ok! api "host_to_any" (invoke (:hres-to-any api) (:ctx rtab) hr out))
+                     (invoke (:hres-delete api) hr)
+                     (.set seg I8 (long 0) (byte RESOURCE))
+                     (.set seg ADDR (long UNION) ^MemorySegment (.get out ADDR (long 0)))))
+                 :else (lower-fn rt))
         ;; 0017 C: wasmtime frees what the callback writes, so every byte of a
         ;; result comes from malloc. Measured: an Arena pointer survives one
         ;; call and aborts the process at 2000.
@@ -873,12 +917,111 @@
            cat)
           (range (invoke (:import-count api) ct (.-ptr e))))))
 
+(defn- iface-instance
+  "wasmtime refuses a second `add_instance` for one interface name, so both
+   resources and functions go through one cache."
+  [api ^Arena arena root cache iface]
+  (or (get @cache iface)
+      (let [out ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
+        (ok! api "linker_instance_add_instance"
+             (invoke (:li-add-inst api) root (cstr arena iface)
+                     (long (count (.getBytes ^String iface "UTF-8"))) out))
+        (let [v (.get out ADDR (long 0))] (swap! cache assoc iface v) v))))
+
+(defn- reflect-import-resources
+  "Every `ITEM_RESOURCE` in the import list, clustered by type. One type can
+   carry several names — a `use`d resource appears once per interface that
+   uses it, and `type headers = fields` appears again — and reflected items
+   compare equal when they are the same type (`0018` A)."
+  [api ^Arena arena ^Engine e ^MemorySegment ct]
+  (let [[pp lp] (name-pair arena)
+        item ^MemorySegment (.allocate arena (long ITEM))
+        found (into []
+                    (comp
+                     (keep (fn [i]
+                             (when (invoke (:import-nth api) ct (.-ptr e) (long i) pp lp item)
+                               (let [nm (read-name pp lp)]
+                                 (when (= ITEM-IFACE (bit-and (long (.get item I8 (long 0))) 0xFF))
+                                   (let [of (.get item ADDR (long ITEM-OF))
+                                         [ip il] (name-pair arena)
+                                         sub ^MemorySegment (.allocate arena (long ITEM))]
+                                     (into []
+                                           (keep (fn [j]
+                                                   (when (invoke (:iface-nth api) of (.-ptr e) (long j) ip il sub)
+                                                     (when (= ITEM-RESOURCE (bit-and (long (.get sub I8 (long 0))) 0xFF))
+                                                       [(str nm "#" (read-name ip il))
+                                                        (invoke (:rty-clone api) (.get sub ADDR (long ITEM-OF)))]))))
+                                           (range (invoke (:iface-count api) of (.-ptr e))))))))))
+                     cat)
+                    (range (invoke (:import-count api) ct (.-ptr e))))]
+    ;; Cluster: each entry is {:names [...] :type ptr}.
+    (reduce (fn [acc [nm ty]]
+              (if-let [k (first (keep-indexed
+                                 (fn [i cls]
+                                   (when (invoke (:rty-equal api) (:type cls) ty) i))
+                                 acc))]
+                (update-in acc [k :names] conj nm)
+                (conj acc {:names [nm] :type ty})))
+            [] found)))
+
+(defn- define-resources!
+  "Registers one host resource type per cluster, under every name in it."
+  [api ^Arena arena ^Engine e clink ^MemorySegment ct resources table drop-errs cache]
+  (when (seq resources)
+    (let [classes (reflect-import-resources api arena e ct)
+          known   (set (mapcat :names classes))
+          extra   (remove known (keys resources))]
+      (when (seq extra)
+        (throw (ex-info (str "no such resource: " (pr-str (vec extra)))
+                        {:cljwit/error :no-such-resource
+                         :cljwit/extra (vec extra)
+                         :cljwit/resources known})))
+      (let [root (invoke (:linker-root api) clink)]
+        (doseq [[i cls] (map-indexed vector classes)]
+          (let [named (filterv resources (:names cls))]
+            (when (< 1 (count named))
+              (throw (ex-info (str "one type, two keys: " (pr-str named)
+                                   " name the same resource, which has one destructor")
+                              {:cljwit/error :duplicate-resource :cljwit/names named})))
+            (when-let [nm (first named)]
+              (let [drop-fn (:drop (get resources nm))
+                    tag (int (inc i))
+                    dtor (reify ResourceDtor
+                           (call [_ _d _cx rep]
+                             (try
+                               (let [[v] (get @table rep)]
+                                 (swap! table dissoc rep)
+                                 (when drop-fn (drop-fn v)))
+                               ;; 0018 E: a guest drop must still succeed.
+                               (catch Throwable t (swap! drop-errs conj t)))
+                             MemorySegment/NULL))
+                    stub (.upcallStub (Linker/nativeLinker)
+                                      (.bindTo (.findVirtual (MethodHandles/lookup) ResourceDtor "call"
+                                                             (MethodType/methodType
+                                                              MemorySegment ^"[Ljava.lang.Class;"
+                                                              (into-array Class [MemorySegment MemorySegment Integer/TYPE])))
+                                               dtor)
+                                      (FunctionDescriptor/of ADDR (into-array java.lang.foreign.MemoryLayout
+                                                                              [ADDR ADDR I32]))
+                                      arena (into-array java.lang.foreign.Linker$Option []))
+                    rty (invoke (:rty-new-host api) tag)]
+                ;; Every name in the class, one tag: two names under distinct
+                ;; tags fails instantiate with a message naming neither.
+                (doseq [n (:names cls)]
+                  (let [[iface rname] (str/split n #"#" 2)]
+                    (ok! api "linker_instance_add_resource"
+                         (invoke (:li-add-res api) (iface-instance api arena root cache iface)
+                                 (cstr arena rname)
+                                 (long (count (.getBytes ^String rname "UTF-8")))
+                                 rty stub MemorySegment/NULL MemorySegment/NULL))))
+                nil))))))))
+
 (defn- define-imports!
   "Registers each supplied Clojure function with the linker. Missing imports
    are wasmtime's to report at instantiate, in a message that names both the
    interface and the function (`0017` B); what the host checks is the other
    direction, because a key nobody needs is a typo."
-  [api ^Arena arena ^Engine e _ctx clink ^MemorySegment ct imports dead]
+  [api ^Arena arena ^Engine e _ctx clink ^MemorySegment ct imports dead rtab cache]
   (when (seq imports)
     (let [needed (reflect-imports api arena e ct)
           extra  (remove (set (keys needed)) (keys imports))]
@@ -887,8 +1030,7 @@
                         {:cljwit/error :no-such-import
                          :cljwit/extra (vec extra)
                          :cljwit/imports (set (keys needed))})))
-      (let [root (invoke (:linker-root api) clink)
-            ifaces (atom {})]
+      (let [root (invoke (:linker-root api) clink)]
         (doseq [[nm f] imports]
           (let [sig (get needed nm)
                 bad (distinct (mapcat unimportable
@@ -898,17 +1040,8 @@
                               {:cljwit/error :unsupported-type
                                :cljwit/import nm :cljwit/kinds (vec bad)})))
             (let [[iface fname] (if (str/includes? nm "#") (str/split nm #"#" 2) [nil nm])
-                  li (if (nil? iface)
-                       root
-                       (or (get @ifaces iface)
-                           (let [out ^MemorySegment (.allocate arena ^java.lang.foreign.MemoryLayout ADDR)]
-                             (ok! api "linker_instance_add_instance"
-                                  (invoke (:li-add-inst api) root (cstr arena iface)
-                                          (long (count (.getBytes ^String iface "UTF-8"))) out))
-                             (let [v (.get out ADDR (long 0))]
-                               (swap! ifaces assoc iface v)
-                               v))))
-                  stub (import-stub api arena sig f nm dead)]
+                  li (if (nil? iface) root (iface-instance api arena root cache iface))
+                  stub (import-stub api arena sig f nm dead rtab)]
               (ok! api "linker_instance_add_func"
                    (invoke (:li-add-func api) li (cstr arena fname)
                            (long (count (.getBytes ^String fname "UTF-8")))
@@ -947,7 +1080,7 @@
   "Instantiates a compiled component. Cheap — tens of microseconds — so a
    store per request is the intended shape."
   (^Instance [^Artifact art] (instantiate art {}))
-  (^Instance [^Artifact art {:keys [imports wasi]}]
+  (^Instance [^Artifact art {:keys [imports wasi resources]}]
    (closed! (.-closed art) "artifact")
    (let [^Engine e (.-engine art)
          _     (closed! (.-closed e) "engine")
@@ -961,7 +1094,12 @@
         ;; instance has to know it is dead rather than let every later call
         ;; report a trap with the cause gone.
          dead  (atom nil)
-         _     (define-imports! api arena e ctx clink ct imports dead)
+        ;; 0018 B: the rep table, and the failures a `:drop` collected.
+         rtab  {:ctx ctx :table (atom {}) :next (atom 0) :errs (atom [])}
+         li-cache (atom {})
+         _     (define-resources! api arena e clink ct resources
+                 (:table rtab) (:errs rtab) li-cache)
+         _     (define-imports! api arena e ctx clink ct imports dead rtab li-cache)
          _     (when wasi (enable-wasi! api arena ctx clink wasi))
          inst  ^MemorySegment (.allocate arena (long INSTANCE))
          _     (ok! api "linker_instantiate"
