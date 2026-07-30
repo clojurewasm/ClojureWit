@@ -62,7 +62,13 @@ They differ by three orders of magnitude in cost and by everything in scope:
 |---|---|---:|
 | `engine` | process-wide, shared by everything | ~0 ms warm |
 | `compile` | Cranelift compilation of one component | **1.6 ms** (2.4 KB) … **19.2 ms** (103 KB) |
-| `instantiate` | a store plus an instance | 0.02 ms |
+| `instantiate` | a store plus an instance | 0.02 ms in C, **0.057 ms through `cljwit.host`** |
+
+**Corrected 2026-07-30:** the 0.02 ms is a C probe's. `cljwit.host` measures
+**56.9 µs** for the same step, because `instantiate` makes many FFM calls and
+each pays the flat crossing `0013` priced. The ratio the decision rests on
+survives — compilation is still 30–300× instantiation — but the absolute figure
+was not this library's.
 
 Compilation is 80–1000× instantiation and scales with module size. Fusing them
 would make `wasmtime_component_serialize`/`deserialize_file` unreachable, and

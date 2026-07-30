@@ -30,15 +30,30 @@ What is settled, measured 2026-07-30:
 The identity is the exact WIT name, `iface#func`, as `0014` B decided. One
 naming rule for both directions.
 
-**The stubs should not be per-instance, even though the functions are.**
-`Linker.upcallStub` measures **~7 µs warm and 30–160 µs cold**, against a 20 µs
-instantiate; a fresh closure per request means a fresh stub and a fresh linker
-per request. The shape that avoids it — one stub per import *name*, cached on
-the artifact, dispatching through the store's data pointer
-(`wasmtime_store_new(engine, data, finalizer)` / `wasmtime_context_get_data`,
-both present in 47.0.1) to the per-instance Clojure function — keeps A's
-per-request state and makes stubs and linker engine-scoped. **Unimplemented and
-unverified**; recorded because the naive shape has a measured cost.
+**Amended 2026-07-30: the per-instantiate linker stays, measured.** The first
+version of this paragraph argued that stubs must be engine-scoped, on a 7 µs
+stub against a 20 µs instantiate. Both figures were the wrong side of the
+boundary. Measured through `cljwit.host` itself:
+
+| | µs per instantiate |
+|---|---:|
+| no imports | **56.9** |
+| one import | **73.2** |
+
+So an import costs **+16 µs on a 57 µs baseline** — stub, reflection and
+linker registration together — and the 20 µs came from a C probe, not from
+this library (see the correction in `0014` C).
+
+Reusing one linker across instantiates *does* work — wasmtime does not refuse
+it — and measured in C it saves **1.23–1.45×**, not the multiple the argument
+assumed. Against that, engine-scoped stubs need routing through the store data
+pointer to reach a per-instance Clojure function, and `0018`'s review showed
+that is exactly where destructor routing becomes hard.
+
+**So: per-instantiate, until a world with many *user* imports says otherwise.**
+WASI does not: `add_wasip2` supplies its interfaces without a stub each.
+Falsified by a component whose own imports number in the dozens, where 16 µs
+each would dominate.
 
 ### B. The host checks for *extra* imports, and lets wasmtime report missing ones
 
