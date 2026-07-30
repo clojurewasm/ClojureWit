@@ -67,15 +67,55 @@
    :f32 9 :f64 10 :char 11 :string 12
    :flags 20 :tuple 15 :own 21 :borrow 21})
 
-(defn- lib-path []
-  (or (System/getenv "CLJWIT_WASMTIME_LIB")
-      (throw (ex-info "CLJWIT_WASMTIME_LIB is unset — see doc/design/0005"
-                      {:cljwit/error :no-library}))))
+(def ^:private LIB-DIRS
+  ;; Where `cmake --install` conventionally puts the C API — homebrew's prefix
+  ;; on Apple Silicon, then the default prefixes. Probed, not searched (0019).
+  ["/opt/homebrew/lib" "/usr/local/lib" "/usr/lib"])
+
+(defn- lib-source
+  "Where libwasmtime comes from — first source wins (`0019`). An explicit
+   source that fails to load is an error, not a fallthrough: a typo'd path
+   that silently probed onward could load a different wasmtime than the one
+   named."
+  [explicit]
+  (or explicit
+      (System/getProperty "cljwit.wasmtime.lib")
+      (System/getenv "CLJWIT_WASMTIME_LIB")
+      (let [nm (System/mapLibraryName "wasmtime")]
+        (or (first (keep (fn [d] (let [f (io/file d nm)]
+                                   (when (.exists f) (str f))))
+                         LIB-DIRS))
+            ;; The bare name reaches dlopen, which honors LD_LIBRARY_PATH /
+            ;; DYLD_LIBRARY_PATH and the OS defaults.
+            nm))))
+
+(defn- open-lib ^SymbolLookup [^Arena arena explicit]
+  (let [src (lib-source explicit)]
+    (try
+      (SymbolLookup/libraryLookup ^String src arena)
+      (catch IllegalArgumentException e
+        (throw (ex-info
+                (str "libwasmtime failed to load from " (pr-str src)
+                     ". Pass (engine {:lib path}), set -Dcljwit.wasmtime.lib"
+                     " or CLJWIT_WASMTIME_LIB, or install it where a package"
+                     " manager puts it (`brew install wasmtime`; wasmtime's"
+                     " *-c-api release tarballs carry it too). doc/design/0019")
+                {:cljwit/error :no-library :cljwit/tried src}
+                e))))))
 
 (defn- ffm
   "Binds one libwasmtime symbol. `ret` nil means void."
-  [^SymbolLookup lookup ^Linker linker ^String nm ret args]
-  (let [seg ^MemorySegment (.orElseThrow (.find lookup nm))
+  [^SymbolLookup lookup ^Linker linker src ^String nm ret args]
+  (let [opt (.find lookup nm)
+        _   (when-not (.isPresent opt)
+              ;; An old libwasmtime *loads* and then lacks the component API:
+              ;; it entered the C API between wasmtime 40 and 43 (0005). The
+              ;; raw NoSuchElementException would say nothing.
+              (throw (ex-info (str nm " is missing from " (pr-str src)
+                                   " — cljwit.host needs wasmtime >= 43. doc/design/0019")
+                              {:cljwit/error :symbol-missing
+                               :cljwit/symbol nm :cljwit/lib src})))
+        seg ^MemorySegment (.get opt)
         ls  (into-array java.lang.foreign.MemoryLayout args)
         fd  ^FunctionDescriptor (if ret (FunctionDescriptor/of ret ls)
                                     (FunctionDescriptor/ofVoid ls))]
@@ -105,10 +145,11 @@
 
 (defn- api
   "Every entry point this namespace uses, bound once per engine."
-  [^Arena arena]
+  [^Arena arena lib]
   (let [linker (Linker/nativeLinker)
-        lookup (SymbolLookup/libraryLookup ^String (lib-path) arena)
-        b      (fn [nm ret & args] (ffm lookup linker nm ret args))
+        src    (lib-source lib)
+        lookup (open-lib arena lib)
+        b      (fn [nm ret & args] (ffm lookup linker src nm ret args))
         BOOL   ValueLayout/JAVA_BOOLEAN]
     {:engine-new    (b "wasm_engine_new" ADDR)
      :engine-delete (b "wasm_engine_delete" nil ADDR)
@@ -811,11 +852,16 @@
 
 (defn engine
   "A wasmtime engine. Process-lifetime: share one across every component, or
-   they can never be linked (a compiled artifact is engine-scoped)."
-  ^Engine []
-  (let [arena (Arena/ofShared)
-        a     (api arena)]
-    (->Engine arena a (invoke (:engine-new a)) (AtomicBoolean. false))))
+   they can never be linked (a compiled artifact is engine-scoped).
+
+   `:lib` names the libwasmtime to bind; without it the property
+   `cljwit.wasmtime.lib`, then `CLJWIT_WASMTIME_LIB`, then the conventional
+   install locations are tried, in that order (`0019`)."
+  (^Engine [] (engine {}))
+  (^Engine [{:keys [lib]}]
+   (let [arena (Arena/ofShared)
+         a     (api arena lib)]
+     (->Engine arena a (invoke (:engine-new a)) (AtomicBoolean. false)))))
 
 (defn compile
   "Compiles a component. This is the expensive step — milliseconds, scaling

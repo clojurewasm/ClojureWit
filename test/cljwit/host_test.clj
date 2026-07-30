@@ -61,6 +61,30 @@
               (f i))))
         (finally (.delete ^File c))))))
 
+(deftest finding-libwasmtime
+  ;; `0019`. An explicit source that fails to load is an error naming it, not
+  ;; a fallthrough — a typo that silently probed onward could load a different
+  ;; wasmtime than the one named.
+  (testing "a :lib that does not load stops there, naming the path"
+    (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                          (host/engine {:lib "/nonexistent/libwasmtime.dylib"})))]
+      (is (= :no-library (:cljwit/error (ex-data ex))))
+      (is (re-find #"/nonexistent/libwasmtime\.dylib" (ex-message ex)))))
+  (when lib
+    (testing "the system property is honored — and beats the environment"
+      (try
+        (System/setProperty "cljwit.wasmtime.lib" "/also/not/here.dylib")
+        (let [ex (is (thrown? clojure.lang.ExceptionInfo (host/engine)))]
+          (is (= "/also/not/here.dylib" (:cljwit/tried (ex-data ex)))
+              "CLJWIT_WASMTIME_LIB points at a real library, and lost"))
+        (finally (System/clearProperty "cljwit.wasmtime.lib"))))
+    (testing "an explicit :lib beats the property"
+      (try
+        (System/setProperty "cljwit.wasmtime.lib" "/also/not/here.dylib")
+        (with-open [e (host/engine {:lib lib})]
+          (is (some? e)))
+        (finally (System/clearProperty "cljwit.wasmtime.lib"))))))
+
 (deftest reflects-its-own-exports
   (with-echo
     (fn [i]
