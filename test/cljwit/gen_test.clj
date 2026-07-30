@@ -79,6 +79,44 @@
     (is (= "variant{leaf(u32), nil}" (wt {:kind :variant :cases [["leaf" :u32] ["nil" nil]]})))
     (is (= "record{x: f64, y: f64}" (wt {:kind :record :fields [["x" :f64] ["y" :f64]]})))))
 
+(deftest the-generated-shape-is-kondo-clean
+  ;; `0020`'s falsifier — clj-kondo flagging the generated shape — is checked
+  ;; by linting real output carrying a clojure.core shadow and a result
+  ;; return. Skipped where clj-kondo is not on PATH; the gate's shell has it.
+  (let [src (gen/source-for {"count" u32-sig
+                             "run"   {:params [["v" :u32]]
+                                      :result {:kind :result :ok :u32 :err :string}}}
+                            {:ns 'gen.kondo})
+        dir (io/file (System/getProperty "java.io.tmpdir")
+                     (str "cljwit-kondo-" (System/nanoTime)))
+        f   (io/file dir "gen" "kondo.clj")]
+    (io/make-parents f)
+    (spit f src)
+    (try
+      (if-let [res (try (shell/sh "clj-kondo" "--lint" (str dir))
+                        (catch java.io.IOException _ nil))]
+        (is (zero? (long (:exit res))) (str (:out res)))
+        (println "clj-kondo not on PATH — skipping generated-shape lint"))
+      (finally (.delete ^File f)))))
+
+(deftest rename-values-must-be-symbols
+  ;; A string value would slip past collision detection and emit two defns
+  ;; with one name, the second silently shadowing the first.
+  (is (= :bad-options
+         (:cljwit/error (ex-data (is (thrown? clojure.lang.ExceptionInfo
+                                              (gen/source-for {"a:b/c@1.0.0#run" u32-sig}
+                                                              {:ns 'x
+                                                               :rename {"a:b/c@1.0.0#run" "run2"}}))))))))
+
+(deftest the-instance-symbol-dodges-every-param
+  ;; Params named i, i_, … must push the instance symbol out of the way
+  ;; deterministically — a gensym would break byte-identical regeneration.
+  (let [src (gen/source-for {"f" {:params [["i" :u32] ["i_" :u32]] :result :u32}}
+                            {:ns 'gen.dodge})]
+    (is (str/includes? src "[i__ i i_]"))
+    (is (some? (load-string src)))
+    (remove-ns 'gen.dodge)))
+
 (deftest the-hash-is-of-the-api
   (testing "same signatures, same hash — regardless of option noise"
     (is (= (#'gen/api-hash {"a" u32-sig}) (#'gen/api-hash {"a" u32-sig}))))

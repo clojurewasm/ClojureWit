@@ -1096,13 +1096,17 @@
                                  r))))
                      cat)
                     (range (invoke (:import-count api) ct (.-ptr e))))]
-    ;; Cluster: each entry is {:names [...] :type ptr}.
+    ;; Cluster: each entry is {:names [...] :type ptr}. A merged name's clone
+    ;; is a duplicate owned pointer -- dropping it undeleted leaks one per
+    ;; extra name per instantiate, which is exactly the multi-name shape
+    ;; 0018 A calls common.
     (reduce (fn [acc [nm ty]]
               (if-let [k (first (keep-indexed
                                  (fn [i cls]
                                    (when (invoke (:rty-equal api) (:type cls) ty) i))
                                  acc))]
-                (update-in acc [k :names] conj nm)
+                (do (invoke (:rty-delete api) ty)
+                    (update-in acc [k :names] conj nm))
                 (conj acc {:names [nm] :type ty})))
             [] found)))
 

@@ -180,6 +180,30 @@
                 "and the instance it belongs to still takes it")))
         (finally (.delete ^File f))))))
 
+(deftest one-resource-under-two-names
+  ;; `0018` A: a `use`d resource reflects once per interface. Both names must
+  ;; bind to one type — and the clustering merge deletes the duplicate clone,
+  ;; which only this multi-name shape exercises.
+  (if-not lib
+    (println "CLJWIT_WASMTIME_LIB unset — skipping multi-name resource test")
+    (let [f (build-component! "mres")]
+      (try
+        (with-open [e (host/engine)
+                    a (host/compile e (io/file f))]
+          (let [dropped (atom [])
+                opts {:resources {"local:mres/host@0.1.0#token"
+                                  {:drop (fn [v] (swap! dropped conj v))}}
+                      :imports {"local:mres/host@0.1.0#mint" (fn [v] {:n v})
+                                "local:mres/more@0.1.0#peek" (fn [t] (:n t))}}]
+            (with-open [i (host/instantiate a opts)]
+              (is (= 9 ((i "run") 9))
+                  "minted through one interface, peeked through the other")
+              (is (= [{:n 9}] @dropped)))
+            (dotimes [_ 20]
+              (.close ^java.lang.AutoCloseable (host/instantiate a opts)))
+            (is true "20 multi-name instantiates exercised the merge-branch delete")))
+        (finally (.delete ^File f))))))
+
 (deftest reflection-cleanup-survives-repetition
   ;; type_delete, item_delete and resource_type_delete are required by the
   ;; pinned headers and fire on every reflection. The val_delete incident

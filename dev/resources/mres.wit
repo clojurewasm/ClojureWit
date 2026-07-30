@@ -1,0 +1,18 @@
+// One resource under two names: `more` `use`s `host`'s token, so reflection
+// reports the same type once per interface (`0018` A). This is the shape the
+// clustering merge branch deletes a duplicate clone in — the leak a review
+// found could not be exercised while every fixture had one name per type.
+package local:mres@0.1.0;
+interface host {
+  resource token { }
+  mint: func(v: u32) -> token;
+}
+interface more {
+  use host.{token};
+  peek: func(t: borrow<token>) -> u32;
+}
+world w {
+  import host;
+  import more;
+  export run: func(v: u32) -> u32;
+}

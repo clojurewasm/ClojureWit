@@ -43,6 +43,11 @@
       (throw (ex-info (str ":rename names exports the component does not have: "
                            (pr-str (vec extra)))
                       {:cljwit/error :no-such-export :cljwit/extra (vec extra)})))
+    ;; A string value would slip past collision detection (group-by treats
+    ;; "run" and 'run as distinct) and then emit two same-named defns.
+    (when-let [bad (seq (remove simple-symbol? (vals rename)))]
+      (throw (ex-info (str ":rename values must be simple symbols: " (pr-str (vec bad)))
+                      {:cljwit/error :bad-options :cljwit/values (vec bad)})))
     (let [rows  (mapv (fn [[k sig]]
                         {:wit k :var (or (get rename k) (var-name k)) :sig sig})
                       described)
@@ -93,7 +98,12 @@
 
 (defn- emit-fn [{:keys [wit var sig]}]
   (let [pnames (mapv (fn [[n _]] (symbol n)) (:params sig))
-        isym   (first (remove (set pnames) '[i inst instance ci]))
+        ;; Total and deterministic: a gensym here would break byte-identical
+        ;; regeneration, and nil would emit silently broken source.
+        isym   (loop [s "i"]
+                 (if (contains? (set (map str pnames)) s)
+                   (recur (str s "_"))
+                   (symbol s)))
         handle? (some (fn [[_ t]] (#{:own :borrow} t)) (:params sig))
         doc    (cond-> (str "WIT: " (sig-line wit sig))
                  handle? (str "\n  The handle argument must come from this same instance."))]

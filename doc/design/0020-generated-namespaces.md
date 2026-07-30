@@ -198,7 +198,7 @@ syntax, and they are **structural**: reflection has no declared type names
   `map` — are already handled by the computed `:refer-clojure :exclude`.)
 - A real component whose interface count makes even `:interface`-split
   namespaces unreadable — reopens C's granularity.
-- clj-kondo flagging the generated shape itself — the gate generates
-  against a fixture whose exports include a `clojure.core` shadow and a
-  `result` return, and the review measured arity warnings working through
-  exactly this shape.
+- clj-kondo flagging the generated shape itself — the gate lints real
+  generated output carrying a `clojure.core` shadow and a `result` return
+  (`gen_test`, skipped where clj-kondo is absent; the dev shell has it),
+  and the review measured arity warnings working through this shape.
