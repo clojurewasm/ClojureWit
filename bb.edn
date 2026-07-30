@@ -47,6 +47,14 @@
   check-tools {:doc  "Verify the local toolchain against tools.json"
                :task (run "bin/check-tools")}
 
+  ensure-npm  {:doc  "Materialize node_modules (the dev-loop assembler, 0026/0029) when absent"
+               :task (when (and (fs/exists? "package.json")
+                                (not (fs/exists? "node_modules/binaryen")))
+                       (run "npm" "ci" "--no-audit" "--no-fund"))}
+
+  repl        {:doc  "The ClojureWit nREPL server (0029): evals compile to Wasm, run in the engine child"
+               :task (run "clojure" "-M:repl")}
+
   test        {:doc  "Unit tests (JVM)"
                :task (if (and (fs/exists? "test") (seq (fs/glob "test" "**.clj")))
                        (run "clojure" "-X:test")
@@ -195,6 +203,6 @@
   ;; push-time hook stops being a good trade — and this is how that becomes
   ;; visible, without a rule anyone has to remember to read.
   check       {:doc     "The gate. Everything a change must pass; CI runs exactly this."
-               :depends [check-tools lint fmt-check reflection test]
+               :depends [check-tools ensure-npm lint fmt-check reflection test]
                :task    (println (format "\n✓ gate green (%.1fs)"
                                          (/ (- (System/currentTimeMillis) start-ms) 1000.0)))}}}

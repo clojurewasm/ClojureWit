@@ -40,25 +40,57 @@
             form))))
     form))
 
+(defn- fresh-genv [ns-sym]
+  (atom {:namespaces
+         {ns-sym        {:mappings (ns-map 'clojure.core)
+                         :aliases {} :ns ns-sym}
+          'clojure.core {:mappings (ns-map 'clojure.core)
+                         :aliases {} :ns 'clojure.core}}}))
+
+(defmacro ^:private with-host [& body]
+  `(binding [ana/macroexpand-1 macroexpand-1
+             ana/create-var    (fn [sym# var-env#]
+                                 (doto (intern (:ns var-env#) sym#)
+                                   (reset-meta! (meta sym#))))
+             ana/parse         ana/-parse
+             ana/var?          var?]
+     ~@body))
+
+(defn open-session
+  "A persistent analysis session (`0029`): one kept namespace — internal
+   and gensym'd, presented to the user as `user` — so a later form's
+   analysis resolves an earlier form's vars. The corpus lanes must NOT
+   use this: the oracle's isolation rule (`0022` B.2) depends on
+   `analyze-forms`' per-call discard, which is unchanged."
+  []
+  (let [ns-sym (gensym "cljwit.session")]
+    (create-ns ns-sym)
+    {:ns ns-sym :genv (fresh-genv ns-sym)}))
+
+(defn analyze-in-session!
+  "Analyzes one form in the session's kept environment; returns its AST."
+  [{:keys [ns genv]} form]
+  (with-host
+    (with-env genv
+      (run-passes (ana/analyze form {:context :ctx/expr :locals {} :ns ns})))))
+
+(defn close-session!
+  "Discards the session's analysis namespace."
+  [{:keys [ns]}]
+  (remove-ns ns))
+
 (defn analyze-forms
   "Analyzes top-level `forms` in order as one program — later forms see
-   earlier `def`s. Returns a vector of ASTs."
+   earlier `def`s. Returns a vector of ASTs. The namespace is created
+   and discarded per call — the corpus oracle's isolation rule
+   (`0022` B.2); sessions use `open-session` instead."
   [forms]
   (let [ns-sym (gensym "cljwit.analysis")]
     (create-ns ns-sym)
     (try
       (let [env  {:context :ctx/expr :locals {} :ns ns-sym}
-            genv (atom {:namespaces
-                        {ns-sym       {:mappings (ns-map 'clojure.core)
-                                       :aliases {} :ns ns-sym}
-                         'clojure.core {:mappings (ns-map 'clojure.core)
-                                        :aliases {} :ns 'clojure.core}}})]
-        (binding [ana/macroexpand-1 macroexpand-1
-                  ana/create-var    (fn [sym var-env]
-                                      (doto (intern (:ns var-env) sym)
-                                        (reset-meta! (meta sym))))
-                  ana/parse         ana/-parse
-                  ana/var?          var?]
+            genv (fresh-genv ns-sym)]
+        (with-host
           (with-env genv
             (mapv #(run-passes (ana/analyze % env)) forms))))
       (finally (remove-ns ns-sym)))))

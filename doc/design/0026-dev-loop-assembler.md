@@ -122,9 +122,11 @@ TeaVM's WasmGC binary writer. This note examines them and decides.
   part of "done" for emitted-grammar changes.
 - **The version skew biting**: npm binaryen.js and the flake's binaryen
   are different builds of one project (131 vs 129 today). `tools.json`
-  gains the dev assembler's version when the nREPL unit lands; until
-  then the committed differential is also the skew watcher — the same
-  interim rule, named once *(review)*.
+  gains the dev assembler's version when the nREPL unit lands *(done —
+  `0029`'s commit added `binaryen-js` to `tools.json` with a node-side
+  probe, and `bb check` materializes `node_modules` via a guarded
+  `npm ci`)*; the committed differential remains the behavioural skew
+  watcher.
 - **The margin is a function of the runtime preamble** *(review)*:
   every per-form module re-parses the whole preamble, and assembly cost
   is linear in it — a 100 KB core-library preamble puts the per-form

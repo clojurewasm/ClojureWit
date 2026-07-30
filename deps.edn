@@ -2,7 +2,12 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.4"}
         ;; The S3 front end: tools.analyzer core plus our own host layer
         ;; (doc/design/0022 E decided it, 0023 grows it into src/).
-        org.clojure/tools.analyzer {:mvn/version "1.2.2"}}
+        org.clojure/tools.analyzer {:mvn/version "1.2.2"}
+        ;; The S2 entry point: the compiler is itself the nREPL server
+        ;; (doc/design/0029) — the same trade shadow-cljs makes.
+        nrepl/nrepl {:mvn/version "1.4.0"}
+        ;; The engine-child protocol is JSON lines (0029).
+        org.clojure/data.json {:mvn/version "2.5.1"}}
 
  :aliases
  {;; --- development -------------------------------------------------------
@@ -22,6 +27,10 @@
   ;; bench/s0/run.clj; the baseline has to run on the same machine in the same
   ;; session as the Wasm lanes for the comparison to mean anything.
   :bench {:extra-paths ["bench"]}
+
+  ;; `clj -M:repl` — the ClojureWit REPL server (doc/design/0029):
+  ;; evals compile to Wasm and run in the engine child, not on the JVM.
+  :repl {:main-opts ["-m" "cljwit.repl"]}
 
   ;; `clj -M:nrepl` — editor connection (CIDER / Calva / any nREPL client)
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0"}

@@ -549,9 +549,10 @@
   ;; different type (0009; 0028 §2a — probed by review).
   20)
 
-(def ^:private runtime-module
+(def runtime-module
   ;; The session runtime, instantiated once per session (0028 §1). The
-  ;; nominal pieces export by name; types cross by structure.
+  ;; nominal pieces export by name; types cross by structure. Public:
+  ;; the nREPL server inits its engine child with it (0029).
   (str "(module\n" runtime
        (apply str (for [f ["truthy" "unbox" "box" "add" "sub" "mul" "quot" "lt"]]
                     (format "  (export \"%s\" (func $%s))\n" f f)))
@@ -576,10 +577,12 @@
   (import \"rt\" \"false\" (global $false (ref eq)))
 ")
 
-(defn- emit-form-module
+(defn emit-form-module
   "One linked dev-mode form: imports the runtime and the session vars it
    reads, exports the vars it newly defs (`0028`). A def form's entry is
-   a statement; an expression form's entry returns i64 through $unbox."
+   a statement; an expression form's entry returns i64 through $unbox.
+   `known` is the set of qualified var names earlier forms defined —
+   the nREPL server threads it across evals (`0029`)."
   [ast known]
   (let [k    (when (max-arity-used [ast]) session-k)
         ctx  {:locals {} :counter (atom 0) :local-decls (atom [])

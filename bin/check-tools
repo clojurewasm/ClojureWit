@@ -12,7 +12,11 @@
    "wasm-tools" ["wasm-tools" "--version"]
    "wasmtime"   ["wasmtime" "--version"]
    "binaryen"   ["wasm-opt" "--version"]
-   "node"       ["node" "--version"]})
+   "node"       ["node" "--version"]
+   ;; npm-managed, resolved from the repo root's node_modules — the
+   ;; require of a package.json is CJS-safe where importing the ESM
+   ;; entry from -e is not.
+   "binaryen-js" ["node" "-p" "require('binaryen/package.json').version"]})
 
 (defn version-of [cmd]
   (let [{:keys [out err exit]} (apply sh cmd)]

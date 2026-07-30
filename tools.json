@@ -11,6 +11,7 @@
     "wasm-tools": { "min": "1.230.0", "required": true,  "why": "wat->wasm, validate, component new" },
     "node":       { "min": "22.0.0",  "required": false, "why": "S0: the V8 lane (WasmGC + speculative inlining)" },
     "wasmtime":   { "min": "43.0.0",  "required": false, "why": "S0: the server lane. WASI 0.3 needs 43+, default-on at 46" },
-    "binaryen":   { "min": "119",     "required": false, "why": "S0: wasm-opt, the Wasm->Wasm optimizer" }
+    "binaryen":   { "min": "119",     "required": false, "why": "S0: wasm-opt, the Wasm->Wasm optimizer" },
+    "binaryen-js": { "min": "131.0.0", "required": false, "why": "the dev-loop assembler (0026/0029), npm-managed; bb check materializes it with npm ci" }
   }
 }

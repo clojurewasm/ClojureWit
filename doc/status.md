@@ -80,9 +80,23 @@ _Short by design, and printed at every session start — so findings live in
    cross-form fn values, so linked K is a session constant, 20 —
    Clojure's own ceiling (`0028` §2a, `0024` amended). The wasmtime
    linked lane is deferred on cost, not capability (`--preload` works;
-   recorded). Next unit: **S2's nREPL entry point** — the shadow-cljs
-   shape from `doc/roadmap.md`, every prerequisite now decided and
-   the session runner already the shape the server drives.
+   recorded). **S2's nREPL entry point is landed** (`0029`): `bb repl`
+   starts a JVM server — the default nrepl stack with eval
+   intercepted, piggieback's shape — whose evals analyze in a
+   persistent session, emit linked form modules, and run in a
+   long-lived node engine child holding the runtime and the var
+   ledger. A real client round-trips the whole pipe in the gate:
+   `(def x 5)` then `(+ x 37)` → 42 across evals, `(defn fib …)` and
+   `(fib 20)` → 6765, fn redefinition takes effect, overflow and traps
+   classify as errors, out-of-slice stays loud. The dev assembler
+   entered `tools.json` and `bb check` materializes it (guarded
+   `npm ci`) — `0026`'s promise kept on its named trigger. An editor
+   connection (CIDER/Calva) remains a manual check. Next: **entering
+   S4 starts with its survey** (`/next`'s stage rule; `0007` sized the
+   stage — lift/lower over linear memory, `cabi_realloc`, resource
+   tables — and `/survey`'s Kotlin sample is the closest prior art);
+   S2's watcher waits for namespace loading, post-S3 compiler work
+   either way.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
