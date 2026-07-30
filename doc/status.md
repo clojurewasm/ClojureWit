@@ -18,26 +18,30 @@ _Short by design, and printed at every session start — so findings live in
    reports tiered drift (`:stale`/`:modified`/`:missing`/`:orphans`), and
    `check` is the CI verb. What remains of S2 — the nREPL entry point and
    the watcher — waits for a compiler to serve, so:
-3. **S3 is entered** (`0022`, proposed, rewritten twice on day one).
-   Decided: prod emission as WAT text through the pinned toolchain; the
-   differential-oracle contract (isolation rule, trap↔class table,
-   comparison holes named); the numeric *fast path* (i31) and semantic
-   baseline (`+` throws, `+'` promotes; `identical?` divergence numbered);
-   **tools.analyzer core plus our own host layer** as the front end
-   (`bb spike-analyzer` is the executable half). Open, each with its
-   benchmark named: the dev-loop output format (`0009`'s precondition —
-   ~23 ms/spawn measured, candidates listed), the boxed-i64 lane (fib's
-   n = 46…92 runs entirely on it, never measured), the throw
-   representation. Next unit: the first vertical slice — corpus harness +
-   scalar entries through analyze → emit → both engines — which forces
-   none of the open decisions.
+3. **S3's first vertical slice is landed** (`0022` decided the shape,
+   `0023` the harness and representation): the differential oracle is in
+   the gate — `corpus/s3.edn` (21 scalar entries) runs through real
+   `clojure` (fresh namespace per entry) and through
+   `cljwit.analyze` → `cljwit.emit` → `wasm-tools` → **wasmtime and V8,
+   in both modes** (which emit identical bytes until `def` lands — stated,
+   not hidden), with `corpus/trap_table.edn` row 1
+   (`ArithmeticException` ↔ division trap) exercised. Representation
+   pinned in `0023`: values are `(ref null eq)`, fixnums i31, nil = null,
+   false/true = singleton structs, overflow arm `unreachable`. Still
+   open, each with its benchmark named (`0022`): the dev-loop output
+   format (before the nREPL unit), the boxed-i64 lane (before the
+   emitter grows past i31), the throw representation. Next unit:
+   **`loop`/`recur` entries and emission** (a block and a `br`, forces
+   nothing open), then `def` — which starts the real dev/prod divergence.
 
 Done since the last update: `0016` `own<T>` handles, `0017` host imports
 (A–F), `0018` host-defined resources, `0012`'s `ex-data` contract shrunk to
 what reflection can supply, `0019` libwasmtime resolution for library users,
 `0020` generated namespaces (`cljwit.host.gen` — one tagged var per export,
 instance first, `host/unwrap` as the opt-in result sugar), `host/describe`,
-and the reflection delete contracts the headers require. What is left of
+the reflection delete contracts the headers require, and `0023` — the
+compiler's first two namespaces exist and every claim they make is checked
+against `clojure` itself on every `bb check`. What is left of
 `0012` is `map`, `list<T,N>`, `stream`/`future` and `error-context`, none of
 which a shipped release can express.
 

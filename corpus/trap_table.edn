@@ -1,0 +1,15 @@
+;; The trap↔class table — doc/design/0022 B.5's numbered artifact. A wasm
+;; trap has no exception class, so an entry where the oracle threw and a
+;; compiled lane trapped compares equal only where a row says so; any
+;; other pairing is a bug or a new numbered divergence.
+;;
+;; :jvm-message narrows the class (0023, review): ArithmeticException
+;; also means long overflow ("long overflow"), which must never equate to
+;; a division trap. All strings are observed, not recalled: the JVM's is
+;; what `(quot 1 0)` actually throws, the engine strings verified
+;; 2026-07-30 on the pinned toolchain (wasmtime 47.0.1, V8/node).
+[{:row 1
+  :class "java.lang.ArithmeticException"
+  :jvm-message "/ by zero"
+  :wasmtime "integer divide by zero"
+  :v8 "divide by zero"}]

@@ -1,0 +1,33 @@
+;; The S3 corpus — doc/design/0022 B's committed artifact; the harness is
+;; test/cljwit/corpus_test.clj (doc/design/0023). Every special form lands
+;; with its entries in the same commit, and any "X works" claim leaves its
+;; probing expression here.
+;;
+;; Authoring rules for day one (0023):
+;;   - entries are scalar: the last form's value is a long (0022 B.3)
+;;   - literals, intermediates AND results all stay inside i31
+;;     (-2^30 .. 2^30-1) — the boxed-i64 lane is open (0022 C), and a
+;;     violation traps `unreachable`, which the harness reports as an
+;;     out-of-contract entry, not a compiler divergence
+;;   - an entry that expects a throw needs its row in trap_table.edn
+[{:id "lit"             :forms [42]}
+ {:id "lit-neg"         :forms [-7]}
+ {:id "lit-i31-max"     :forms [1073741823]}
+ {:id "lit-i31-min"     :forms [-1073741824]}
+ {:id "add-nary"        :forms [(+ 1 2 3 4)]}
+ {:id "sub-chain"       :forms [(- 100 1 2 3)]}
+ {:id "neg-unary"       :forms [(- 5)]}
+ {:id "mul"             :forms [(* 6 7)]}
+ {:id "arith-nested"    :forms [(+ (* 3 4) (- 10 (quot 9 2)))]}
+ {:id "quot-pos"        :forms [(quot 17 5)]}
+ {:id "quot-neg"        :forms [(quot -17 5)]}
+ {:id "if-lt"           :forms [(if (< 1 2) 10 20)]}
+ {:id "if-lt-false"     :forms [(if (< 2 1) 10 20)]}
+ {:id "if-nil"          :forms [(if nil 1 2)]}
+ {:id "if-false"        :forms [(if false 1 2)]}
+ {:id "if-zero-truthy"  :forms [(if 0 1 2)]}
+ {:id "if-untaken-arm"  :forms [(if true 3 (quot 1 0))]}
+ {:id "let-shadow"      :forms [(let [x 1] (let [x (+ x 1)] (* x 10)))]}
+ {:id "let-sequential"  :forms [(let [x 2 y (+ x 3)] (* x y))]}
+ {:id "top-level-forms" :forms [(+ 1 1) (+ 2 2)]}
+ {:id "trap-div-zero"   :forms [(quot 1 0)]}]
